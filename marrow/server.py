@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import __version__, hw, probe, studio
 from .config import deep_merge, load_config
 from .downloader import VIDEO_SUFFIXES, _find_source
-from .utils import log, probe_duration, slugify
+from .utils import ensure_dir, log, probe_duration, slugify
 
 mimetypes.add_type("font/ttf", ".ttf")  # Windows registry often lacks this; @font-face needs it
 
@@ -80,7 +80,19 @@ _OV_INT_RANGES = {"font_size": (30, 140), "size": (30, 140), "outline": (0, 20),
 _OV_COLORS = {"highlight_color", "text_color", "outline_color", "pill_color", "pill_text", "box_color"}
 _OV_CHOICE = {"position": ("lower", "center", "top"), "anim": ("pop", "none"),
               "highlight_mode": ("color", "pill"), "display": ("line", "word")}
-_OV_BOOL = {"uppercase", "bold", "italic", "box"}
+_OV_BOOL = {"uppercase", "bold", "italic", "box", "strip_punct"}
+
+
+def _font_allow():
+    from .caption_styles import PRESETS
+
+    fams = {"Arial"}
+    for p in PRESETS.values():
+        if p.get("font"):
+            fams.add(p["font"])
+        if p.get("font_ar"):
+            fams.add(p["font_ar"])
+    return fams
 
 
 def clean_overrides(ov):
@@ -89,6 +101,9 @@ def clean_overrides(ov):
     for k, v in ov.items():
         if k in _OV_COLORS:
             if isinstance(v, str) and HEX.match(v):
+                out[k] = v
+        elif k == "font":
+            if v in _font_allow():
                 out[k] = v
         elif k == "word_colors":
             if isinstance(v, list):
@@ -148,9 +163,24 @@ def job_overrides(s):
 def clean_global_settings(raw):
     raw = raw if isinstance(raw, dict) else {}
     w, l, r, c = (raw.get(k) if isinstance(raw.get(k), dict) else {} for k in ("whisper", "llm", "render", "captions"))
+    ck = raw.get("cookies") if isinstance(raw.get("cookies"), dict) else {}
     lang = str(w.get("language") or "").strip().lower()
     host = str(l.get("host") or "").strip()
-    return {
+    browsers = ("chrome", "firefox", "edge", "brave", "safari")
+    cfb = str(ck.get("from_browser") or "").strip().lower()
+    cfile = str(ck.get("cookiefile") or "").strip()
+    pace = c.get("min_gap", c.get("pace", 0.22))
+    try:
+        pace = float(pace)
+    except (TypeError, ValueError):
+        pace = 0.22
+    if pace not in (0.28, 0.22, 0.16):
+        pace = 0.22
+    cleaned = {
+        "cookies": {
+            "from_browser": cfb if cfb in browsers else "",
+            "cookiefile": cfile if cfile and Path(cfile).expanduser().exists() else "",
+        },
         "whisper": {
             "model": w.get("model") if w.get("model") in WHISPER_MODELS else "auto",
             "device": w.get("device") if w.get("device") in ("auto", "cuda", "cpu") else "auto",
@@ -166,8 +196,15 @@ def clean_global_settings(raw):
             "encoder": r.get("encoder") if r.get("encoder") in ("auto", "libx264", "h264_nvenc") else "auto",
             "loudnorm": bool(r.get("loudnorm", True)),
         },
-        "captions": {"font": (str(c.get("font") or "").strip()[:60] or "Arial")},
+        "captions": {"font": (str(c.get("font") or "").strip()[:60] or "Arial"),
+                     "min_gap": pace},
     }
+    ex = raw.get("export") if isinstance(raw.get("export"), dict) else {}
+    q = str(ex.get("default_quality") or "").strip()
+    if q not in ("480p", "720p", "1080p", "1440p", "source"):
+        q = "1080p"
+    cleaned["export"] = {"default_quality": q}
+    return cleaned
 
 
 # --------------------------------------------------------------------------- app state
@@ -188,6 +225,7 @@ class App:
         self.projects = {}
         self.saved_settings = {}
         self.model_dl = {"running": False, "done": [], "error": None}
+        self.exports = {}
         self._ff = {"ffmpeg": bool(shutil.which("ffmpeg") and shutil.which("ffprobe")), "libass": False}
         try:
             fr = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True,
@@ -267,6 +305,7 @@ class App:
                 "score": c["score"], "title": c.get("title", ""), "reason": c.get("reason", ""),
                 "hashtags": c.get("hashtags", []), "status": c.get("status", "ready"),
                 "last_error": c.get("last_error"), "platforms": list(files),
+                "style": c.get("style"),
                 "render_pct": c.get("render_pct", 0.0), "render_eta": c.get("render_eta"),
                 "urls": {pl: f"/media/{vid}/{fn}?v={rev}" for pl, fn in files.items()},
                 "thumb": f"/media/{vid}/{c['thumb']}?v={rev}" if c.get("thumb") else None,
@@ -278,6 +317,7 @@ class App:
         out = {k: p.get(k) for k in keys}
         out.update(clips=clips, thumb=thumb,
                    scan=p.get("scan"), candidates=p.get("candidates", []),
+                   counts=p.get("counts"),
                    proxy=bool(vid and (self.work / vid / "proxy.mp4").exists()),
                    strip=bool(vid and (self.work / vid / "strip.jpg").exists()))
         return out
@@ -296,7 +336,10 @@ class App:
 
     def media_path(self, p):
         if p.get("source_kind") == "url":
-            return _find_source(self.work / p["video_id"]) if p.get("video_id") else None
+            if not p.get("video_id"):
+                return None
+            found, _ = _find_source(self.work / p["video_id"])
+            return found
         sp = Path(p["source"])
         return sp if sp.exists() else None
 
@@ -312,6 +355,22 @@ class App:
                 raise ApiError("Video preview is not ready yet. Wait for it to finish loading.")
             info = pr["info"]
             source, kind, name = info["url"], "url", info.get("title") or "video"
+            try:  # copy preview/strip now so the scan panel has video instantly
+                import shutil
+
+                vid0 = slugify(info.get("video_id") or info["url"])
+                wd = ensure_dir(Path(self.config_for(settings)["cache_dir"]) / vid0)
+                d = Path(pr["dir"])
+                prev = d / "preview.mp4"
+                if not prev.exists():
+                    cs = sorted(d.glob("preview.*"))
+                    prev = cs[0] if cs else None
+                if prev is not None and not (wd / "proxy.mp4").exists():
+                    shutil.copy(prev, wd / "proxy.mp4")
+                if (d / "strip.jpg").exists() and not (wd / "strip.jpg").exists():
+                    shutil.copy(d / "strip.jpg", wd / "strip.jpg")
+            except Exception:
+                log.exception("Probe copy failed")
         elif upload:
             path = self.uploads / Path(str(upload)).name
             if not path.exists():
@@ -400,11 +459,13 @@ class App:
                 if not title:
                     raise ApiError("Title can't be empty.")
                 c["title"] = title
+                c["custom_title"] = True
             if "hashtags" in body:
                 tags = body["hashtags"]
                 if isinstance(tags, str):
                     tags = re.findall(r"[\w]+", tags)
                 c["hashtags"] = [str(t).lstrip("#").lower() for t in tags][:15]
+                c["custom_tags"] = True
             self._sync_manifest(p)
             self._save()
         return self.public(p)
@@ -488,6 +549,7 @@ class App:
                 "rank": rank, "start": start, "end": min(end, total),
                 "captions": bool(body.get("captions", True)), "style": style,
                 "edits": body.get("edits") if isinstance(body.get("edits"), dict) else {},
+                "timings": body.get("timings") if isinstance(body.get("timings"), dict) else {},
             }
             c.update(status="rendering", last_error=None)
             self._save()
@@ -526,11 +588,16 @@ class App:
             settings, source = dict(p["settings"]), p["source"]
 
         def have_source(src, duration):
+            with self.lock:
+                if p.get("source_kind") == "url" and src.title:
+                    p["name"] = src.title
+                if src.video_id and not p.get("video_id"):
+                    p["video_id"] = src.video_id  # early: scan/proxy routes work mid-run
             threading.Thread(target=self._build_proxy,
                              args=(pid, str(src.path), str(src.workdir), duration),
                              daemon=True, name="marrow-proxy").start()
 
-        def progress(stage, frac, *, log=None, scan=None, candidates=None, clips=None):
+        def progress(stage, frac, *, log=None, scan=None, candidates=None, clips=None, counts=None):
             if pid in self.cancel:
                 raise Cancelled()
             with self.lock:
@@ -546,6 +613,8 @@ class App:
                     p["candidates"] = candidates
                 if clips is not None:
                     p["clips"] = clips
+                if counts is not None:
+                    p["counts"] = counts
                 e = eta_holder.get("eta")
                 if e is not None:
                     p["eta_sec"] = round(e.remaining(), 1)
@@ -591,8 +660,29 @@ class App:
                 if f.name not in keep:
                     f.unlink(missing_ok=True)
             with self.lock:
+                old = list(p.get("clips", []))
+                for c in clips:
+                    best, best_ov = None, 0.0
+                    for o in old:
+                        try:
+                            ov = min(c["end"], o["end"]) - max(c["start"], o["start"])
+                        except (KeyError, TypeError):
+                            continue
+                        if ov > best_ov:
+                            best, best_ov = o, ov
+                    if best and best_ov > 0:
+                        if best.get("custom_title"):
+                            c["title"] = best["title"]
+                            c["custom_title"] = True
+                        if best.get("custom_tags"):
+                            c["hashtags"] = best["hashtags"]
+                            c["custom_tags"] = True
+                        if best.get("custom_style") and best.get("style"):
+                            c["style"] = best["style"]
+                            c["custom_style"] = True
                 p.update(status="done", stage="Done", progress=1.0, video_id=vid, name=title, clips=clips,
                          finished=time.time(), engine=hw.get_engine()["engines"])
+                self._clear_live(p)
                 self._sync_manifest(p)
                 self._save()
         except Cancelled:
@@ -604,9 +694,10 @@ class App:
             log.exception("Pipeline failed")
             with self.lock:
                 p.update(status="error", stage="Failed", error=f"{type(e).__name__}: {str(e)[:1500]}")
+                self._clear_live(p)
                 self._save()
 
-    def _run_rerender(self, pid, rank, start, end, captions, style, edits):
+    def _run_rerender(self, pid, rank, start, end, captions, style, edits, timings=None):
         with self.lock:
             p = self.projects.get(pid)
             if p is None:
@@ -616,7 +707,7 @@ class App:
         try:
             workdir, out_dir = self.work / vid, self.out / vid
             words, raw = studio.load_words(workdir)
-            if edits and studio.apply_edits(workdir, raw, edits):
+            if (edits or timings) and studio.apply_edits(workdir, raw, edits, timings):
                 words, raw = studio.load_words(workdir)
             studio.attach_energy(workdir, words)
             cfg = self.config_for(p["settings"], extra={"captions": style})
@@ -629,7 +720,9 @@ class App:
             has_thumb = studio.make_thumb(next(iter(produced.values())), out_dir / thumb)
             with self.lock:
                 c.update(start=start, end=end, duration=round(end - start, 2), rev=int(time.time() * 1000),
-                         status="ready", last_error=None, thumb=thumb if has_thumb else c.get("thumb"))
+                         status="ready", last_error=None, thumb=thumb if has_thumb else c.get("thumb"),
+                         style={"preset": style.get("preset"), "overrides": style.get("overrides", {})},
+                         custom_style=True)
                 self._sync_manifest(p)
                 self._save()
         except Exception as e:
@@ -654,12 +747,215 @@ class App:
         except OSError:
             pass
 
+    # ---- exports
+    def clean_export_spec(self, raw):
+        from .caption_styles import PRESETS
+
+        raw = raw if isinstance(raw, dict) else {}
+        st = raw.get("style") if isinstance(raw.get("style"), dict) else {}
+        adv = raw.get("advanced") if isinstance(raw.get("advanced"), dict) else {}
+        try:
+            fps = int(adv.get("fps") or 0)
+        except (TypeError, ValueError):
+            fps = 0
+        return {
+            "format": raw.get("format") if raw.get("format") in ("mp4", "mov") else "mp4",
+            "quality": raw.get("quality") if raw.get("quality") in (
+                "480p", "720p", "1080p", "1440p", "source") else "1080p",
+            "captions": bool(raw.get("captions", True)),
+            "style": {"preset": st.get("preset") if st.get("preset") in PRESETS else None,
+                      "overrides": clean_overrides(st.get("overrides"))},
+            "framing": raw.get("framing") if raw.get("framing") in ("crop", "blur_fit") else None,
+            "advanced": {"fps": fps if fps in (30, 60) else 0},
+        }
+
+    def export_cache_key(self, c, spec):
+        import hashlib
+
+        blob = json.dumps([c.get("rank"), round(c.get("start", 0), 2), round(c.get("end", 0), 2),
+                           c.get("rev", 0), spec], sort_keys=True)
+        return hashlib.sha1(blob.encode()).hexdigest()[:12]
+
+    def _export_words(self, workdir, edits):
+        """Words with export-scoped text edits applied in memory (never persisted)."""
+        words, _raw = studio.load_words(workdir)
+        if not edits:
+            return words
+        out = []
+        for idx, w in enumerate(words):
+            t = edits.get(str(idx), edits.get(idx))
+            if t is None:
+                out.append(w)
+            elif str(t).strip():
+                w.text = str(t).strip()[:40]
+                out.append(w)
+            # empty text -> word dropped from this export only
+        return out
+
+    def start_export(self, pid, rank, body):
+        import uuid as _uuid
+
+        with self.lock:
+            p = self.get(pid)
+            c = self.clip(p, rank)
+            if not p.get("video_id"):
+                raise ApiError("Nothing to export yet.", 409)
+            spec = self.clean_export_spec(body)
+            spec["platform"] = (c.get("platforms") or [p["settings"]["platform"]])[0]
+            if not spec["style"]["preset"]:
+                saved = c.get("style") or {}
+                spec["style"] = {
+                    "preset": saved.get("preset") or p["settings"]["caption_style"].get("preset", "bold-pop"),
+                    "overrides": saved.get("overrides") or p["settings"]["caption_style"].get("overrides", {}),
+                }
+            key = self.export_cache_key(c, spec)
+            ext = ".mov" if spec["format"] == "mov" else ".mp4"
+            dest = ensure_dir(self.out / p["video_id"] / "exports") / f"clip_{rank:02d}_{key}{ext}"
+            job = _uuid.uuid4().hex[:10]
+            self.exports[job] = {"id": job, "pid": pid, "rank": rank, "state": "queued",
+                                 "progress": 0.0, "file": None, "error": None, "encoder": None,
+                                 "spec": spec, "key": key,
+                                 "edits": body.get("edits") if isinstance(body.get("edits"), dict) else {}}
+        if dest.exists():
+            with self.lock:
+                self.exports[job].update(state="done", progress=1.0, file=str(dest), encoder="cached")
+            return self.exports[job]
+        threading.Thread(target=self._run_export, args=(job,), daemon=True,
+                         name=f"marrow-export-{job}").start()
+        return self.exports[job]
+
+    def _run_export(self, job):
+        with self.lock:
+            j = self.exports.get(job)
+            if not j:
+                return
+            p = self.projects.get(j["pid"])
+            c = self.clip(p, j["rank"]) if p else None
+            if not p or not c:
+                j.update(state="error", error="Project or clip is gone.")
+                return
+            j["state"] = "running"
+            spec, vid = dict(j["spec"]), p["video_id"]
+            edits = dict(j.get("edits") or {})
+        try:
+            workdir, out_dir = self.work / vid, self.out / vid
+            words = self._export_words(workdir, edits)
+            studio.attach_energy(workdir, words)
+            cfg = self.config_for(p["settings"])
+            media = self.media_path(p)
+            if not media:
+                raise RuntimeError("Source video is missing on disk.")
+            ext = ".mov" if spec["format"] == "mov" else ".mp4"
+            dest = ensure_dir(out_dir / "exports") / f"clip_{j['rank']:02d}_{j['key']}{ext}"
+            t0 = time.time()
+
+            def prog(frac):
+                el = time.time() - t0
+                left = el / frac * (1 - frac) if frac > 0.05 else None
+                with self.lock:
+                    j["progress"] = round(frac, 3)
+                    j["eta"] = round(left, 1) if left else None
+
+            fp, enc = studio.export_clip(cfg, media, workdir, words, j["rank"],
+                                         c["start"], c["end"], spec, dest, prog)
+            with self.lock:
+                j.update(state="done", progress=1.0, file=fp, encoder=enc, eta=None)
+        except Exception as e:
+            log.exception("Export failed")
+            with self.lock:
+                self.exports[job].update(state="error", error=f"{type(e).__name__}: {str(e)[:500]}")
+
+    def start_batch_export(self, pid, body):
+        import uuid as _uuid
+
+        with self.lock:
+            p = self.get(pid)
+            if not p.get("clips"):
+                raise ApiError("This project has no clips to export.", 409)
+            spec = self.clean_export_spec(body)
+            apply_all = bool(body.get("apply_to_all", True))
+            wanted = body.get("clip_ids")
+            ranks = [c["rank"] for c in p["clips"] if not wanted or c["rank"] in wanted]
+            if not ranks:
+                raise ApiError("No clips selected.", 400)
+            job = _uuid.uuid4().hex[:10]
+            self.exports[job] = {"id": job, "pid": pid, "rank": None, "state": "queued",
+                                 "progress": 0.0, "file": None, "error": None,
+                                 "encoder": None, "spec": spec, "batch": ranks,
+                                 "apply_to_all": apply_all}
+        threading.Thread(target=self._run_batch_export, args=(job,), daemon=True,
+                         name=f"marrow-batch-{job}").start()
+        return self.exports[job]
+
+    def _run_batch_export(self, job):
+        import zipfile as _zip
+
+        with self.lock:
+            j = self.exports.get(job)
+            if not j:
+                return
+            p = self.projects.get(j["pid"])
+            if not p:
+                j.update(state="error", error="Project is gone.")
+                return
+            j["state"] = "running"
+            spec, vid = dict(j["spec"]), p["video_id"]
+            ranks, apply_all = list(j["batch"]), j["apply_to_all"]
+        try:
+            workdir, out_dir = self.work / vid, self.out / vid
+            words, _raw = studio.load_words(workdir)
+            studio.attach_energy(workdir, words)
+            cfg = self.config_for(p["settings"])
+            media = self.media_path(p)
+            if not media:
+                raise RuntimeError("Source video is missing on disk.")
+            tmpdir = ensure_dir(out_dir / "exports" / f"batch_{job}")
+            made = []
+            for n, rank in enumerate(ranks):
+                with self.lock:
+                    c = self.clip(p, rank)
+                one = dict(spec)
+                if not apply_all:
+                    saved = c.get("style") or {}
+                    one["style"] = {"preset": saved.get("preset") or spec["style"]["preset"],
+                                    "overrides": saved.get("overrides") or spec["style"]["overrides"]}
+                one["platform"] = (c.get("platforms") or [p["settings"]["platform"]])[0]
+                key = self.export_cache_key(c, one)
+                ext = ".mov" if one["format"] == "mov" else ".mp4"
+                dest = tmpdir / f"clip_{rank:02d}_{key}{ext}"
+                if not dest.exists():
+                    studio.export_clip(cfg, media, workdir, words, rank, c["start"], c["end"],
+                                       one, dest)
+                made.append(dest)
+                with self.lock:
+                    self.exports[job]["progress"] = round((n + 1) / len(ranks), 3)
+            zpath = out_dir / "exports" / f"batch_{job}.zip"
+            with _zip.ZipFile(zpath, "w", _zip.ZIP_STORED) as z:
+                for f in made:
+                    z.write(f, f.name)
+                mf = out_dir / "manifest.json"
+                if mf.exists():
+                    z.write(mf, "manifest.json")
+            with self.lock:
+                self.exports[job].update(state="done", progress=1.0, file=str(zpath))
+        except Exception as e:
+            log.exception("Batch export failed")
+            with self.lock:
+                self.exports[job].update(state="error", error=f"{type(e).__name__}: {str(e)[:500]}")
+
     # ---- misc
     MODELS_PRELOAD = ("tiny", "distil-large-v3", "large-v3-turbo")
+    def _clear_live(self, p):
+        """Drop live-only state on terminal transitions (error/done)."""
+        for k in ("log", "scan", "candidates", "counts"):
+            p.pop(k, None)
+
     def _build_proxy(self, pid, src_path, workdir, duration):
         try:
             wd = Path(workdir)
-            if (wd / "proxy.mp4").exists() and (wd / "strip.jpg").exists():
+            if (wd / "proxy.mp4").exists():
+                if not (wd / "strip.jpg").exists():
+                    studio.make_strip(wd / "proxy.mp4", wd)
                 return  # already have both (e.g. regenerate, or copied from a probe)
             with self.lock:
                 p = self.projects.get(pid)
@@ -769,7 +1065,11 @@ class App:
             "settings": {"whisper": {k: cfg["whisper"].get(k) for k in ("model", "device", "language", "quality")},
                          "llm": {k: cfg["llm"][k] for k in ("enabled", "model", "host")},
                          "render": {k: cfg["render"][k] for k in ("encoder", "loudnorm")},
-                         "captions": {"font": cfg["captions"]["font"]}},
+                         "captions": {"font": cfg["captions"]["font"],
+                                      "min_gap": cfg["captions"].get("min_gap", 0.22)},
+                         "cookies": {"from_browser": cfg["cookies"].get("from_browser", ""),
+                                     "cookiefile": cfg["cookies"].get("cookiefile", "")},
+                         "export": {"default_quality": cfg.get("export", {}).get("default_quality", "1080p")}},
             "job_defaults": clean_job_settings({
                 "clips": cfg["clip"]["target_count"], "duration": 45,
                 "caption_style": {"preset": cfg["captions"].get("preset", "bold-pop"),
@@ -1071,6 +1371,40 @@ def r_clip_pre(h, q, pid, rank):
     h.send_file(path)
 
 
+@route("POST", r"/api/projects/([0-9a-f]+)/clips/(\d+)/export")
+def r_export(h, q, pid, rank):
+    h.send_json(h.app.start_export(pid, int(rank), h.read_json()), 202)
+
+
+@route("GET", r"/api/projects/([0-9a-f]+)/exports/([0-9a-f]+)")
+def r_export_status(h, q, pid, job):
+    with h.app.lock:
+        j = h.app.exports.get(job)
+        if not j or j["pid"] != pid:
+            raise ApiError("Export not found", 404)
+        h.send_json({k: j.get(k) for k in ("id", "state", "progress", "eta", "error", "encoder")})
+
+
+@route("GET", r"/api/projects/([0-9a-f]+)/exports/([0-9a-f]+)/file")
+def r_export_file(h, q, pid, job):
+    with h.app.lock:
+        j = h.app.exports.get(job)
+        if not j or j["pid"] != pid:
+            raise ApiError("Export not found", 404)
+        fp, state = j.get("file"), j.get("state")
+    if state != "done" or not fp:
+        raise ApiError("Export not ready yet", 409)
+    path = Path(fp).resolve()
+    if h.app.out.resolve() not in path.parents or not path.is_file():
+        raise ApiError("File not found", 404)
+    h.send_file(path, download_name=path.name)
+
+
+@route("POST", r"/api/projects/([0-9a-f]+)/export")
+def r_batch_export(h, q, pid):
+    h.send_json(h.app.start_batch_export(pid, h.read_json()), 202)
+
+
 @route("POST", r"/api/projects/([0-9a-f]+)/clips/(\d+)/rerender")
 def r_rerender(h, q, pid, rank):
     h.send_json(h.app.queue_rerender(pid, int(rank), h.read_json()))
@@ -1277,9 +1611,10 @@ def main(argv=None):
     # Warm the real GPU probe once in the background so Settings opens instantly.
     def _warm():
         try:
-            from .transcriber import cuda_ready
+            from .transcriber import cuda_ready, warm_models
 
             cuda_ready()
+            warm_models()
         except Exception:
             pass
     threading.Thread(target=_warm, daemon=True, name="marrow-gpu-probe").start()

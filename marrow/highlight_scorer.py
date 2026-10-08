@@ -30,17 +30,27 @@ AR_PROMPT_ADD = ("The transcript is Arabic. Return JSON with English keys, "
                  "but write `title`, `reason` and `hashtags` in Arabic.")
 
 
-def parse_llm_json(raw):
-    """Extract and validate the JSON object from a model reply. Returns None if unusable."""
-    if not raw:
-        return None
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
+BATCH_PROMPT = """You are an expert short-form video editor. Judge each transcript excerpt below as a standalone vertical clip for YouTube Shorts and Reels.
+
+For EACH excerpt, score 1 to 10:
+- hook: how strongly the first sentence grabs attention
+- standalone: how well it makes sense with no outside context
+- emotion: emotional intensity, surprise, humor, or controversy
+- payoff: whether it ends on a satisfying point instead of trailing off
+
+Also write per excerpt:
+- title: a catchy title, at most 60 characters
+- reason: one short sentence explaining the scores
+- hashtags: 3 to 5 relevant lowercase hashtags
+
+Respond with ONLY a JSON array; element N judges excerpt N, each with exactly these keys: hook, standalone, emotion, payoff, title, reason, hashtags.
+
+Excerpts:
+{text}
+"""
+
+
+def _validate(data):
     out = {}
     for key in ("hook", "standalone", "emotion", "payoff"):
         try:
@@ -54,6 +64,20 @@ def parse_llm_json(raw):
         tags = re.findall(r"\w+", tags)
     out["hashtags"] = [str(t).lstrip("#").lower() for t in tags][:5]
     return out
+
+
+def parse_llm_json(raw):
+    """Extract and validate the JSON object from a model reply. Returns None if unusable."""
+    if not raw:
+        return None
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    return _validate(data)
 
 
 def llm_score(parsed: dict) -> float:
@@ -89,10 +113,7 @@ class OllamaScorer:
         log.warning("Ollama model '%s' is not pulled. Run: ollama pull %s", self.model, self.model)
         return False
 
-    def score(self, text: str, lang=None):
-        prompt = PROMPT.replace("{text}", text[:8000])
-        if (lang or "").startswith("ar"):
-            prompt += "\n" + AR_PROMPT_ADD
+    def _post(self, prompt):
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -105,9 +126,43 @@ class OllamaScorer:
             try:
                 resp = self.session.post(f"{self.host}/api/chat", json=payload, timeout=self.timeout)
                 resp.raise_for_status()
-                parsed = parse_llm_json(resp.json().get("message", {}).get("content", ""))
-                if parsed:
-                    return parsed
+                return resp.json().get("message", {}).get("content", "")
             except Exception as e:
                 log.debug("LLM attempt %d failed: %s", attempt + 1, e)
+                if attempt >= self.retries:
+                    return None
         return None
+
+    def score(self, text: str, lang=None):
+        prompt = PROMPT.replace("{text}", text[:8000])
+        if (lang or "").startswith("ar"):
+            prompt += "\n" + AR_PROMPT_ADD
+        content = self._post(prompt)
+        return parse_llm_json(content) if content else None
+
+    def batch_score(self, texts, lang=None):
+        """Score up to ~20 windows in ONE prompt. Returns a list aligned with
+        texts (None where the model failed); caller retries those individually."""
+        if not texts:
+            return []
+        joined = "\n\n".join(f"--- WINDOW {i} ---\n{t[:4000]}" for i, t in enumerate(texts))
+        prompt = BATCH_PROMPT.replace("{text}", joined)
+        if (lang or "").startswith("ar"):
+            prompt += "\n" + AR_PROMPT_ADD
+        content = self._post(prompt)
+        if not content:
+            return [None] * len(texts)
+        match = re.search(r"\[.*\]", content, re.DOTALL)
+        if not match:
+            return [None] * len(texts)
+        try:
+            items = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return [None] * len(texts)
+        if not isinstance(items, list):
+            return [None] * len(texts)
+        out = []
+        for i in range(len(texts)):
+            item = items[i] if i < len(items) and isinstance(items[i], dict) else None
+            out.append(_validate(item) if item else None)
+        return out

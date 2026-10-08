@@ -13,6 +13,7 @@ BASE = dict(
     display="line",                                          # line | word (one word at a time)
     word_colors=None,                                        # cycled per word in word mode (None = highlight_color)
     strip_punct=True,
+    min_gap=0.22,                                            # min on-screen time per caption event (pace)
     position="lower",                                          # lower | center | top
     max_words_per_line=4, max_chars_per_line=22,
 )

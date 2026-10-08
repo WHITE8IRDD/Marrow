@@ -21,6 +21,11 @@ diarization:
   enabled: false               # needs: pip install -e ".[diarization]" and HF_TOKEN
   hf_token: ""
 
+# YouTube downloads: cookies fix most 403 Forbidden errors on large videos.
+cookies:
+  from_browser: ""             # chrome, firefox, edge, brave, safari, or empty
+  cookiefile: ""               # optional path to a Netscape cookie file
+
 clip:
   min_duration: 20
   max_duration: 60             # your preferred ceiling; platform caps below also apply
@@ -39,6 +44,7 @@ render:
 captions:
   enabled: true
   preset: bold-pop             # default caption style (see the style picker in the UI)
+  min_gap: 0.22                # caption pace: 0.28 relaxed, 0.22 normal, 0.16 snappy
   font: Arial                  # install a bold font like Montserrat ExtraBold for a better look
   bold: true
   font_size: 72

@@ -149,16 +149,37 @@ def generate_ass(words, clip_start, clip_end, output_path, style, res_x=1080, re
     raw = []
 
     if st["display"] == "word":
+        gap = float(st.get("min_gap", 0.22) or 0.22)
         palette = [hex_to_bgr(c) for c in (st.get("word_colors") or [st["highlight_color"]])]
-        for k, w in enumerate(clip_words):
-            nxt = clip_words[k + 1].start if k + 1 < len(clip_words) else float("inf")
-            end = min(max(w.end + 0.10, w.start + 0.20), nxt)      # hold a little, NEVER overlap the next word
-            end = max(end, w.start + 0.05)
-            base = w.text.strip(".,!?;:…،؛؟") if st.get("strip_punct", True) else w.text
-            txt = ass_escape(base.upper() if uppercase else base)
+        clusters, cur = [], []
+        for w in clip_words:
+            if cur and w.start - cur[0].start < gap and len(cur) < 4:
+                cur.append(w)                    # too close: merge into one event
+            else:
+                if cur:
+                    clusters.append(cur)
+                cur = [w]
+        if cur:
+            clusters.append(cur)
+        for k, cl in enumerate(clusters):
+            w0, wlast = cl[0], cl[-1]
+            nxt = clusters[k + 1][0].start if k + 1 < len(clusters) else float("inf")
+            words_txt = []
+            for x in cl:
+                t = x.text.strip(".,!?;:…،؛؟") if st.get("strip_punct", True) else x.text
+                words_txt.append(t)
+            raw_txt = " ".join(words_txt)
+            txt = ass_escape(raw_txt.upper() if uppercase else raw_txt)
+            end = max(wlast.end + 0.10, w0.start + gap)
+            end = max(end, w0.start + min(len(raw_txt) * 0.04, 0.5))   # long words hold longer
+            if nxt - wlast.end > 0.35:
+                end = min(end + 0.15, nxt - 0.01)                       # hold into pauses
+            if raw_txt and raw_txt[-1] in ".,!?…،؟؛":
+                end = max(end, min(w0.start + 0.25, nxt - 0.01))        # punctuation pause
+            end = min(max(end, w0.start + 0.05), nxt - 0.01 if nxt != float("inf") else end)
             col = palette[k % len(palette)]
             tag = f"\\1c&H{col}&\\fscx70\\fscy70\\t(0,90,\\fscx108\\fscy108)\\t(90,160,\\fscx100\\fscy100)"
-            raw.append((w.start, end, "{" + tag + "}" + txt))
+            raw.append((w0.start, end, "{" + tag + "}" + txt))
     else:
         lines = group_words(clip_words, st["max_words_per_line"], st["max_chars_per_line"])
         for li, line in enumerate(lines):

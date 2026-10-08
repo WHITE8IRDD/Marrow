@@ -9,7 +9,7 @@ from .candidates import build_sentences, generate_candidates, score_candidates, 
 from .captioner import clean_words, generate_ass
 from .clip_selector import combine_scores, padded_bounds, select_clips
 from .config import load_config
-from .downloader import prepare_source
+from .downloader import _find_source, fetch_source, prepare_source, resolve_source
 from .highlight_scorer import OllamaScorer, llm_score
 from .models import Word
 from .renderer import render_clip
@@ -64,6 +64,22 @@ def _fallback_tags(text: str):
     return top_keywords(text)
 
 
+def _write_manifest(output_dir, src, source, results):
+    out_dir = ensure_dir(Path(output_dir) / src.video_id)
+    (out_dir / "manifest.json").write_text(
+        json.dumps({"source": str(source), "title": src.title, "clips": results},
+                   indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return out_dir
+
+
+def _fmt_span(sec):
+    sec = max(0, int(round(sec)))
+    m, s = divmod(sec, 60)
+    return f"{m}:{s:02d}"
+
+
 def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_count=None,
                  clip_duration=None, platform="shorts", layout=None, use_llm=None,
                  force=False, progress=None, config=None, on_source=None, eta_holder=None):
@@ -91,30 +107,70 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
     min_dur = max(5, min(clip["min_duration"], max_dur - 5))
 
     require_ffmpeg()
+    t_stage, clock = {}, [time.monotonic()]
 
-    # 1. Download / locate source (cached)
+    def tick(name):
+        now = time.monotonic()
+        t_stage[name] = t_stage.get(name, 0.0) + (now - clock[0])
+        clock[0] = now
+
+    # 1. Resolve source (fast, no download). A cached proxy feeds transcription
+    # immediately; the full file downloads before rendering.
     emit("Preparing source video", 0.02)
-    src = prepare_source(source, cfg["cache_dir"])
-    duration = probe_duration(src.path)
-    if duration < min_dur:
+    src = resolve_source(source, cfg["cache_dir"], cfg)
+    proxy = src.workdir / "proxy.mp4"
+    have_full, full_audio_only = _find_source(src.workdir)
+    if have_full is None and src.path is not None and Path(src.path).exists():
+        have_full, full_audio_only = Path(src.path), False  # local file: render from it
+    if proxy.exists():
+        duration = probe_duration(proxy)
+    elif have_full is not None:
+        duration = probe_duration(have_full)
+    else:
+        duration = None
+    if duration is not None and duration < min_dur:
         raise ValueError(f"Video is only {duration:.0f}s; shorter than the minimum clip length ({min_dur}s).")
-    if on_source:
+    if on_source and duration is not None:
         on_source(src, duration)
     eta = None
-    if eta_holder is not None:
+    if eta_holder is not None and duration is not None:
         from .eta import Eta
         eta = Eta(duration, clip["target_count"], max_dur, bool(cfg["llm"]["enabled"]),
                   Path(cfg["cache_dir"]) / "timings.json")
-        eta.update("download", 1.0)
         eta_holder["eta"] = eta
 
-    # 2. Extract audio
+    # 2. Extract audio (proxy first for speed, full source otherwise)
     audio_path = src.workdir / "audio.wav"
     if force or not audio_path.exists():
+        asrc = proxy if proxy.exists() else None
+        if asrc is None:
+            if have_full is None:
+                src = fetch_source(src, source, cfg)
+                tick("download")
+                if eta:
+                    eta.update("download", 1.0)
+                have_full, full_audio_only = _find_source(src.workdir)
+            asrc = have_full
+            duration = probe_duration(asrc)
+            if duration < min_dur:
+                raise ValueError(f"Video is only {duration:.0f}s; shorter than the minimum clip length ({min_dur}s).")
+            if on_source:
+                on_source(src, duration)
+            if eta_holder is not None and eta is None:
+                from .eta import Eta
+                eta = Eta(duration, clip["target_count"], max_dur, bool(cfg["llm"]["enabled"]),
+                          Path(cfg["cache_dir"]) / "timings.json")
+                eta.update("download", 1.0)
+                eta_holder["eta"] = eta
         emit("Extracting audio", 0.08)
-        run_ffmpeg(["-i", src.path, "-vn", "-ac", "1", "-ar", "16000", audio_path])
+        run_ffmpeg(["-i", asrc, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", audio_path])
+        tick("audio")
     if eta:
         eta.update("audio", 1.0)
+    if duration is None:  # stale cache without any video file: fall back to audio length
+        duration = probe_duration(audio_path)
+        if duration < min_dur:
+            raise ValueError(f"Video is only {duration:.0f}s; shorter than the minimum clip length ({min_dur}s).")
 
     # 3. Transcribe (cached)
     wcfg = cfg["whisper"]
@@ -135,6 +191,7 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
         _save_words(words_path, f"auto:{lang}" if wcfg["model"] == "auto" else wcfg["model"], words)
     else:
         words = clean_words(words)
+    tick("transcribe")
     if not words:
         raise ValueError("No speech was detected in this video.")
 
@@ -155,10 +212,10 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
             emit("Detecting speakers", 0.43)
             assign_speakers(sentences, diarize(audio_path, dcfg["hf_token"]))
 
-    emit("Finding candidate clips", 0.46)
     cands = score_candidates(generate_candidates(sentences, min_dur, max_dur))
     if not cands:
         raise ValueError(f"No clip candidates between {min_dur}s and {max_dur}s. Try a wider duration range.")
+    emit("Finding candidate clips", 0.46, counts={"moments": len(cands), "short": 0})
 
     lcfg = cfg["llm"]
     llm_model = "qwen2.5:7b-instruct" if (lang or "").startswith("ar") else lcfg["model"]
@@ -169,18 +226,37 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
                   fallback=None if llm_ready else "Ollama unreachable or model not pulled")
     k = lcfg["max_candidates"] if llm_ready else clip["target_count"] * 4
     short = shortlist(cands, k)
+    prog_clips = [{
+        "rank": n, "start": round(c.start, 2), "end": round(c.end, 2),
+        "duration": round(c.end - c.start, 2), "score": round(c.heuristic, 4),
+        "title": _fallback_title(c.text), "reason": "", "hashtags": [],
+        "status": "rendering", "files": {}, "render_pct": 0.0, "render_eta": None,
+    } for n, c in enumerate(short[:clip["target_count"]], 1)]
+    emit("Shortlisted candidate moments", 0.46, clips=prog_clips,
+         counts={"moments": len(cands), "short": len(short)})
 
-    # 6. LLM judgment (cached)
+    # 6. LLM judgment (cached, batched in groups of 20)
     if llm_ready:
         cache_path = src.workdir / "llm_cache.json"
         cache = {}
         if cache_path.exists() and not force:
             cache = json.loads(cache_path.read_text(encoding="utf-8"))
-        for n, c in enumerate(short, 1):
-            key = f"{llm_model}|{c.start:.2f}|{c.end:.2f}"
-            parsed = cache.get(key) or scorer.score(c.text, lang)
+        keys = [f"{llm_model}|{c.start:.2f}|{c.end:.2f}" for c in short]
+        need = [i for i, (k, c) in enumerate(zip(keys, short)) if not cache.get(k)]
+        for g in range(0, len(need), 20):
+            group = need[g:g + 20]
+            try:
+                got = scorer.batch_score([short[i].text for i in group], lang)
+            except Exception:
+                got = [None] * len(group)
+            for i, parsed in zip(group, got):
+                if parsed is None:  # batch miss: retry this window alone
+                    parsed = scorer.score(short[i].text, lang)
+                if parsed:
+                    cache[keys[i]] = parsed
+        for n, (c, key) in enumerate(zip(short, keys), 1):
+            parsed = cache.get(key)
             if parsed:
-                cache[key] = parsed
                 c.llm, c.llm_score = parsed, llm_score(parsed)
                 c.title, c.reason, c.hashtags = parsed["title"], parsed["reason"], parsed["hashtags"]
             emit(f"Scoring clips with LLM ({n}/{len(short)})", 0.46 + 0.34 * n / len(short),
@@ -196,10 +272,51 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
 
     combine_scores(short, lcfg["weight"])
     chosen = select_clips(short, clip["target_count"])
+    tick("score")
     emit("Ranked candidate moments", 0.80,
          candidates=[{"s": round(c.start, 2), "e": round(c.end, 2),
                       "score": round(c.final * 100)} for c in short],
          log=f"Scored {len(short)} windows; keeping {len(chosen)}.")
+    (src.workdir / "candidates.json").write_text(
+        json.dumps([{"s": round(c.start, 2), "e": round(c.end, 2),
+                     "heuristic": round(c.heuristic, 4),
+                     "final": round(c.final, 4), "title": c.title,
+                     "reason": c.reason, "hashtags": c.hashtags} for c in short],
+                   ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    # Full-res source for rendering (transcription may have run on the proxy).
+    have_full, full_audio_only = _find_source(src.workdir)
+    if have_full is None and src.path is not None and Path(src.path).exists():
+        have_full, full_audio_only = Path(src.path), False
+    if have_full is None:
+        emit("Downloading full video", 0.78)
+        full_src = fetch_source(resolve_source(source, cfg["cache_dir"], cfg), source, cfg)
+        tick("download")
+        if eta:
+            eta.update("download", 1.0)
+        have_full, full_audio_only = _find_source(src.workdir)
+        duration = probe_duration(have_full)
+        if on_source:
+            on_source(full_src, duration)
+    render_src = have_full
+    if full_audio_only:
+        moments = []
+        for rank, c in enumerate(chosen, 1):
+            moments.append({
+                "rank": rank, "start": round(c.start, 2), "end": round(c.end, 2),
+                "duration": round(c.end - c.start, 2), "score": round(c.final, 4),
+                "title": c.title or _fallback_title(c.text),
+                "reason": c.reason or _fallback_reason(c.text),
+                "hashtags": c.hashtags or _fallback_tags(c.text), "files": {},
+            })
+        _write_manifest(output_dir, src, source, moments)
+        raise RuntimeError(
+            "Only audio could be downloaded (YouTube blocked the video track). "
+            "The strongest moments are listed in manifest.json. Sign in to YouTube "
+            "in your browser, then enable 'Use browser cookies' in Settings → "
+            "Advanced → Cookies and run again.")
 
     # 7. Captions + render
     out_dir = ensure_dir(Path(output_dir) / src.video_id)
@@ -212,13 +329,14 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
                 for k in ("res_x", "res_y", "caption_margin_v"))
     )
     render_plats = [plats[0]] if same_cfg else list(plats)
-    prog_clips = [{
-        "rank": rank, "start": round(c.start, 2), "end": round(c.end, 2),
-        "duration": round(c.end - c.start, 2), "score": round(c.final, 4),
-        "title": c.title or _fallback_title(c.text), "reason": c.reason,
-        "hashtags": c.hashtags, "status": "rendering", "files": {},
-        "render_pct": 0.0, "render_eta": None,
-    } for rank, c in enumerate(chosen, 1)]
+    for rank, c in enumerate(chosen, 1):
+        if rank - 1 < len(prog_clips):
+            prog_clips[rank - 1].update(
+                start=round(c.start, 2), end=round(c.end, 2),
+                duration=round(c.end - c.start, 2), score=round(c.final, 4),
+                title=c.title or _fallback_title(c.text), reason=c.reason,
+                hashtags=c.hashtags)
+    del prog_clips[len(chosen):]
     emit("Rendering clips", 0.80, clips=prog_clips)
     try:
         from . import studio as _studio
@@ -267,7 +385,7 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
                         emit(f"Rendering clip {rank}/{len(chosen)} ({plat})",
                              0.80 + 0.20 * state["done"] / max(1, len(tasks)), clips=prog_clips)
 
-            render_clip(src.path, start, end, ass_path, out_path, cfg, plat, on_progress=rprog)
+            render_clip(render_src, start, end, ass_path, out_path, cfg, plat, on_progress=rprog)
             outcome = (start, end, str(out_path), None)
         except Exception as e:
             outcome = (None, None, None, e)
@@ -275,13 +393,21 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
             state["done"] += 1
             finished[(rank, plat)] = outcome
             d = state["done"]
+            if outcome[3] is None:
+                for pc in prog_clips:
+                    if pc["rank"] == rank:
+                        pc.setdefault("files", {})[plat] = outcome[2]
+                        if len(pc["files"]) >= len(render_plats):
+                            pc["status"] = "ready"
         if eta:
             eta.update("render", d / max(1, len(tasks)))
         emit(f"Rendering clip {rank}/{len(chosen)} ({plat})", 0.80 + 0.20 * d / max(1, len(tasks)),
+             clips=prog_clips,
              log=f"Rendered clip {rank}/{len(chosen)} ({plat})." if outcome[3] is None else None)
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
         list(ex.map(one, tasks))
+    tick("render")
 
     for rank, c in enumerate(chosen, 1):
         files = {}
@@ -308,10 +434,12 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
             "files": files,
         })
 
-    (out_dir / "manifest.json").write_text(
-        json.dumps({"source": str(source), "title": src.title, "clips": results},
-                   indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    _write_manifest(output_dir, src, source, results)
+    xs = duration / max(t_stage.get("transcribe", 0.0), 0.01) if t_stage.get("transcribe") else 0.0
+    log.info("Timings: download %s · audio %s · transcribe %s (%.1fx) · score %s · render %s · total %s",
+             _fmt_span(t_stage.get("download", 0.0)), _fmt_span(t_stage.get("audio", 0.0)),
+             _fmt_span(t_stage.get("transcribe", 0.0)), xs,
+             _fmt_span(t_stage.get("score", 0.0)), _fmt_span(t_stage.get("render", 0.0)),
+             _fmt_span(sum(t_stage.values())))
     emit("Done", 1.0)
     return results

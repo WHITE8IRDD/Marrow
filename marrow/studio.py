@@ -14,6 +14,13 @@ from .utils import run_ffmpeg
 ENERGY_FPS = 16000 / 512  # must match audio_features.HOP / sample rate
 
 
+def make_strip(src, workdir):
+    """Thumbnail strip for the scan panel (fast tile filter)."""
+    w = Path(workdir)
+    run_ffmpeg(["-i", src, "-vf", "fps=1/3,scale=160:-2,tile=8x1",
+                "-frames:v", "1", w / "strip.jpg"])
+
+
 def make_proxy(src, workdir, duration):
     """480p seek-friendly proxy + thumbnail strip for the Live Analysis panel."""
     w = Path(workdir)
@@ -43,8 +50,10 @@ def words_in_range(raw, start, end):
     return out
 
 
-def apply_edits(workdir, raw, edits):
-    """Persist corrected caption text into the cached transcript. Returns number changed."""
+def apply_edits(workdir, raw, edits, timings=None):
+    """Persist corrected caption text / deletions / timing tweaks into the cached
+    transcript. Text updates apply first (original indices), then deletions
+    (descending, so indices stay valid). Returns number changed."""
     n = len(raw["words"])
     changed = 0
     for key, value in (edits or {}).items():
@@ -53,9 +62,32 @@ def apply_edits(workdir, raw, edits):
         except (TypeError, ValueError):
             continue
         text = str(value).strip()
-        if not (0 <= i < n) or not text or len(text) > 40 or raw["words"][i][2] == text:
+        if not (0 <= i < n) or not text:
+            continue  # deletions handled below
+        if len(text) > 40 or raw["words"][i][2] == text:
             continue
         raw["words"][i][2] = text
+        changed += 1
+    dels = sorted({int(k) for k, v in (edits or {}).items()
+                   if str(v).strip() == "" and str(k).lstrip("-").isdigit()}, reverse=True)
+    for i in dels:
+        if 0 <= i < len(raw["words"]):
+            del raw["words"][i]
+            changed += 1
+    for key, value in (timings or {}).items():
+        try:
+            i = int(key)
+        except (TypeError, ValueError):
+            continue
+        if not (0 <= i < len(raw["words"])):
+            continue
+        try:
+            s, e = float(value[0]), float(value[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if e - s < 0.05 or s < 0:
+            continue
+        raw["words"][i][0], raw["words"][i][1] = round(s, 3), round(e, 3)
         changed += 1
     if changed:
         (Path(workdir) / "words.json").write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
@@ -108,6 +140,129 @@ def render_clip_files(cfg, source, workdir, words, rank, start, end, platforms, 
         os.replace(tmp, final)
         produced[plat] = final
     return produced
+
+
+EXPORT_QUALITIES = {
+    "480p": {"h": 480, "crf": 26},
+    "720p": {"h": 720, "crf": 23},
+    "1080p": {"h": 1080, "crf": 21},
+    "1440p": {"h": 1440, "crf": 20},
+    "source": {"h": 0, "crf": 18},
+}
+
+_hevc_ok = None
+
+
+def pick_export_encoder(height, cfg_enc):
+    """hevc_nvenc for 1440p+ when supported, else the normal render pick."""
+    from .renderer import pick_encoder
+
+    if height and height > 1080:
+        global _hevc_ok
+        if _hevc_ok is None:
+            try:
+                run_ffmpeg(["-f", "lavfi", "-i", "color=c=black:s=256x256:d=0.1",
+                            "-c:v", "hevc_nvenc", "-f", "null", "-"])
+                _hevc_ok = True
+            except Exception:
+                _hevc_ok = False
+        if _hevc_ok:
+            return "hevc_nvenc"
+        return "libx264"
+    return pick_encoder(cfg_enc)
+
+
+def export_clip(cfg, media, workdir, words, rank, start, end, spec, out_path, on_progress=None):
+    """One-off export render: quality scale, captions on/off, style + framing
+    overrides, container remux. Returns (final_path, encoder_used)."""
+    from .caption_styles import ensure_fonts
+    from .captioner import generate_ass
+    from .renderer import build_filter_graph
+
+    spec = spec or {}
+    plat = spec.get("platform", "shorts")
+    pcfg = cfg["platforms"][plat]
+    rx, ry = pcfg["res_x"], pcfg["res_y"]
+    layout = spec.get("framing") if spec.get("framing") in ("crop", "blur_fit") else cfg["render"]["layout"]
+    quality = spec.get("quality") if spec.get("quality") in EXPORT_QUALITIES else "1080p"
+    q = EXPORT_QUALITIES[quality]
+    adv = spec.get("advanced") if isinstance(spec.get("advanced"), dict) else {}
+    try:
+        fps_cap = int(adv.get("fps") or 0)
+    except (TypeError, ValueError):
+        fps_cap = 0
+
+    d = Path(workdir) / "ass_export"
+    d.mkdir(parents=True, exist_ok=True)
+    ensure_fonts(d)
+    ass_path = None
+    if spec.get("captions", True):
+        st = spec.get("style") if isinstance(spec.get("style"), dict) else {}
+        ass_path = d / f"export_{rank:02d}.ass"
+        generate_ass(words, start, end, ass_path,
+                     {"preset": st.get("preset"), "overrides": st.get("overrides"),
+                      "font": cfg["captions"].get("font", "Arial")},
+                     rx, ry, pcfg["caption_margin_v"])
+    graph = build_filter_graph(layout, rx, ry, cfg["render"]["fps"], {"enabled": False},
+                               ass_path.name if ass_path else None)
+    vlabel = "[v]"
+    if q["h"]:
+        graph += f";[v]scale=-2:{q['h']}[x]"
+        vlabel = "[x]"
+    if fps_cap in (30, 60):
+        graph += f";[{vlabel[1:-1]}]fps={fps_cap}[y]"
+        vlabel = "[y]"
+
+    enc = pick_export_encoder(q["h"], cfg["render"].get("encoder", "auto"))
+    crf = q["crf"]
+    try:
+        crf = int(adv.get("crf", crf))
+    except (TypeError, ValueError):
+        pass
+    crf = max(16, min(32, crf))
+    if enc == "h264_nvenc":
+        venc = ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",
+                "-rc", "vbr", "-cq", str(crf), "-b:v", "0"]
+    elif enc == "hevc_nvenc":
+        venc = ["-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq",
+                "-rc", "vbr", "-cq", str(crf), "-b:v", "0"]
+    else:
+        venc = ["-c:v", "libx264", "-preset", cfg["render"].get("preset", "fast"),
+                "-crf", str(crf)]
+    try:
+        mbps = float(adv.get("video_mbps") or 0)
+    except (TypeError, ValueError):
+        mbps = 0
+    if mbps > 0:
+        venc += ["-maxrate", f"{mbps}M", "-bufsize", f"{2 * mbps}M"]
+    try:
+        ab = int(adv.get("audio_kbps") or 0)
+    except (TypeError, ValueError):
+        ab = 0
+    args = ["-ss", f"{start:.3f}", "-i", str(Path(media).resolve()),
+            "-t", f"{end - start:.3f}", "-filter_complex", graph,
+            "-map", vlabel, "-map", "0:a?", *venc,
+            "-c:a", "aac", "-b:a", f"{ab}k" if ab > 0 else "160k"]
+    if cfg["render"].get("loudnorm", True):
+        args += ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"]
+    args += ["-r", str(fps_cap if fps_cap in (30, 60) else cfg["render"]["fps"]),
+             "-threads", "0", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+    tmp = Path(out_path).with_name(Path(out_path).stem + ".part.mp4")
+    if on_progress is None:
+        run_ffmpeg(args + [tmp], cwd=str(d))
+    else:
+        from .utils import run_ffmpeg_progress
+
+        run_ffmpeg_progress(args + [tmp], max(0.1, end - start), on_progress, cwd=str(d))
+    final = Path(out_path)
+    container = spec.get("format", "mp4")
+    if container == "mov":
+        final = final.with_suffix(".mov")
+        run_ffmpeg(["-i", tmp, "-c", "copy", final], cwd=str(d))
+        tmp.unlink(missing_ok=True)
+    else:
+        os.replace(tmp, final)
+    return str(final), enc
 
 
 def make_clip_thumb(source, start, jpg_path):

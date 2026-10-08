@@ -23,6 +23,7 @@ DEFAULTS = {
         "weight": 0.65,
     },
     "diarization": {"enabled": False, "hf_token": ""},
+    "cookies": {"from_browser": "", "cookiefile": ""},
     "clip": {
         "min_duration": 20,
         "max_duration": 60,
@@ -41,6 +42,7 @@ DEFAULTS = {
     "captions": {
         "enabled": True,
         "preset": "bold-pop",
+        "min_gap": 0.22,
         "font": "Arial",
         "bold": True,
         "font_size": 72,

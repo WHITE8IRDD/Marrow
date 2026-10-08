@@ -31,10 +31,36 @@ def check_file(path):
     return errs
 
 
+def check_starts(path, min_gap=0.15):
+    """No two caption events on the same style may start closer than min_gap."""
+    starts = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("Dialogue:"):
+                parts = line.rstrip("\n").split(",", 9)
+                starts.append(to_sec(parts[1]))
+    starts.sort()
+    errs = []
+    for a, b in zip(starts, starts[1:]):
+        if b - a < min_gap - 1e-9:
+            errs.append(f"starts too close: {a:.2f}s and {b:.2f}s (< {min_gap}s)")
+    return errs
+
+
 def main(argv):
     bad = False
-    for p in argv[1:]:
+    gaps = False
+    paths = []
+    for a in argv[1:]:
+        if a.startswith("--min-start-gap="):
+            gaps = True
+            gap = float(a.split("=", 1)[1])
+        else:
+            paths.append(a)
+    for p in paths:
         errs = check_file(p)
+        if gaps:
+            errs += check_starts(p, gap)
         print(f"{p}: {'OK' if not errs else 'FAIL'}")
         for e in errs:
             print("  " + e)

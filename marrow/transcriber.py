@@ -11,6 +11,42 @@ from . import hw
 
 FAST_MODELS = {"large-v3-turbo", "distil-large-v3"}
 _probe = None
+_CACHE = {"key": None, "model": None, "pipe": None}
+
+MODEL_REPOS = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "small": "Systran/faster-whisper-small",
+    "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
+    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    "large-v3": "Systran/faster-whisper-large-v3",
+}
+
+
+def warm_models(names=("tiny", "distil-large-v3", "large-v3-turbo")):
+    """Download model files (no RAM/VRAM) so the first job doesn't wait on network."""
+    from huggingface_hub import snapshot_download
+
+    for name in names:
+        repo = MODEL_REPOS.get(name)
+        if not repo:
+            continue
+        try:
+            snapshot_download(repo)
+            log.info("Model files ready: %s", name)
+        except Exception as e:
+            log.warning("Could not pre-download %s (%s)", name, e)
+
+
+def vram_total_gb():
+    try:
+        from . import hw
+
+        snap = hw.snapshot()
+        if snap.get("gpu"):
+            return snap["gpu"]["vram_total_gb"]
+    except Exception:
+        pass
+    return 0.0
 
 
 def add_cuda_dll_dirs():
@@ -57,7 +93,7 @@ def detect_language(audio_path):
     audio = decode_audio(str(audio_path), sampling_rate=16000)
     n, sec = len(audio), 16000
     clip = audio[n // 3: n // 3 + 30 * sec] if n > 60 * sec else audio[: 30 * sec]
-    m = WhisperModel("tiny", device="cpu", compute_type="int8")
+    m = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=6)
     lang, prob, _ = m.detect_language(clip)
     log.info("Detected language %s (%.0f%%)", lang, prob * 100)
     return lang, prob
@@ -73,13 +109,25 @@ def pick_model(setting, language, quality="fast", device="cuda"):
     return "large-v3" if quality == "best" else "large-v3-turbo"
 
 
-def _run(name, dev, ct, audio_path, language, beam, bs, on_progress):
+def _get_pipe(name, dev, ct):
+    """One-slot model cache: reuse the same instance across jobs (keyed by name)."""
     from faster_whisper import BatchedInferencePipeline, WhisperModel
 
+    key = (name, dev, ct)
+    if _CACHE["key"] == key and _CACHE["model"] is not None:
+        return _CACHE["model"], _CACHE["pipe"]
+    _CACHE["model"] = _CACHE["pipe"] = None
+    _CACHE["key"] = None
+    gc.collect()
     model = WhisperModel(name, device=dev, compute_type=ct, cpu_threads=6)
     pipe = BatchedInferencePipeline(model=model)
+    _CACHE.update(key=key, model=model, pipe=pipe)
+    return model, pipe
+
+
+def _run(name, dev, ct, audio_path, language, beam, bs, on_progress):
+    _model, pipe = _get_pipe(name, dev, ct)
     t_first = None
-    t0 = time.time()
     segments, info = pipe.transcribe(
         str(audio_path),
         batch_size=bs,
@@ -103,8 +151,6 @@ def _run(name, dev, ct, audio_path, language, beam, bs, on_progress):
             speed = seg.end / max(time.time() - t_first, 0.01)
             line = f"[{seg.start:7.2f}s -> {seg.end:7.2f}s] {seg.text.strip()}"
             on_progress(frac, speed, seg.end, line)
-    del pipe, model
-    gc.collect()                               # free VRAM before the LLM stage
     return words, info.language
 
 
@@ -121,7 +167,9 @@ def transcribe(audio_path, model_size="auto", device="auto", compute_type="int8_
     if not language:
         language, _ = detect_language(audio_path)
     name = pick_model(model_size, language, quality, dev)
-    bs = batch_size if ok else 4
+    vram = vram_total_gb() if ok else 0.0
+    cap = 16 if vram >= 8 else 8 if vram >= 4 else 4
+    bs = min(batch_size, cap) if ok else 4
 
     hw.set_engine("transcribe", device=dev, model=name, compute=ct, language=language,
                   batch=bs, fallback=fallback)
