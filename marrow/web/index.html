@@ -333,6 +333,100 @@ input[type=range]{accent-color:var(--accent)}
 .home{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:var(--gap);max-width:1280px;margin:0 auto;align-items:start}
 .home-right{position:sticky;top:12px;display:grid;gap:12px}
 @media(max-width:1050px){.home{grid-template-columns:1fr}.home-right{position:static}}
+/* ===== Hero Section Anchoring ===== */
+.hero-section{background:radial-gradient(circle at 50% 0%,#1C1C1E 0%,#000000 70%);padding:64px 24px;text-align:center;border-bottom:1px solid #2C2C2E}
+.hero-title{font-size:48px;font-weight:800;letter-spacing:-0.02em;background:linear-gradient(to right,#FFFFFF,#A1A1AA);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:16px}
+.hero-subtitle{font-size:18px;color:#A1A1AA;max-width:600px;margin:0 auto}
+.hero.compact{padding:0;margin:0;background:none;border:none}
+.hero.compact .eyebrow{color:var(--accent);font-size:12px;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px}
+.hero.compact h1{font-size:clamp(28px,3.4vw,40px);margin:0 0 6px;background:none;-webkit-text-fill-color:initial;color:var(--text)}
+.hero.compact p.sub{margin:0;font-size:14px;color:var(--muted);max-width:none}
+/* ===== Settings Panel Polish ===== */
+.settings-group{border-bottom:1px solid #2C2C2E;padding-bottom:16px;margin-bottom:16px}
+.settings-group:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+.tog .knob{width:44px;height:26px;border-radius:99px;background:#3A3A3C;position:relative;transition:background .2s,box-shadow .2s;flex:none}
+.tog .knob::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .2s,transform .2s;box-shadow:0 2px 6px rgba(0,0,0,.3)}
+.tog input:checked+.knob{background:#0A84FF;box-shadow:0 0 0 4px rgba(10,132,255,.2)}
+.tog input:checked+.knob::after{left:21px}
+.tog .tl{font-weight:600;font-size:14px}
+.tog small{display:block;color:#8E8E93;font-weight:400;font-size:11px;margin-top:2px}
+.range-row{display:flex;align-items:center;gap:12px}
+.range-row input[type=range]{flex:1}
+.range-row input[type=number]{width:72px;text-align:center}
+.banner.warn{background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.3);color:#F59E0B;padding:12px 16px;border-radius:10px;margin-bottom:12px;font-size:13px}
+/* ===== Home Page Cleanup ===== */
+.or-divider{display:flex;align-items:center;gap:12px;margin:20px 0;color:var(--muted);font-size:12px}
+.or-divider::before,.or-divider::after{content:"";flex:1;height:1px;background:var(--line)}
+.upload-dropzone{border:2px dashed var(--line2);border-radius:16px;padding:24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s}
+.upload-dropzone:hover{border-color:#0A84FF;background:rgba(10,132,255,.05)}
+.upload-dropzone.drag{border-color:#0A84FF;background:rgba(10,132,255,.1)}
+.upload-dropzone .btn{margin-top:12px}
+.upload-dropzone p{margin:8px 0 0;color:var(--muted);font-size:13px}
+.foundcard{display:none}
+/* ===== Video preview centering ===== */
+.video-preview-container{width:100%;display:flex;justify-content:center;align-items:center}
+/* ===== Clip cards: stacked video + actions, no overlap ===== */
+.clip-card{display:flex;flex-direction:column;background:#1C1C1E;border-radius:12px;overflow:hidden;width:100%;max-width:280px}
+.clip-preview{width:100%;aspect-ratio:9/16;background:#000;position:relative}
+.clip-actions{display:flex;flex-direction:column;padding:12px;gap:8px;background:#1C1C1E;border-top:1px solid #333}
+.clip-title{font-size:14px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px}
+.button-row{display:flex;gap:8px}
+.button-row button{flex:1}
+.clip .vid{aspect-ratio:9/16}
+.clip .meta{border-top:1px solid #333}
+.clip .acts .btn{flex:1;min-width:0}
+/* ===== Projects: bulk select + lock ===== */
+.bulkbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px;flex-wrap:wrap}
+.bulkbar .selrow{display:flex;align-items:center;gap:12px}
+.bulkbar input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent);cursor:pointer}
+.btn-danger{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.4);color:#FCA5A5;border-radius:11px;padding:8px 16px;font-weight:600;cursor:pointer}
+.btn-danger:hover{background:rgba(239,68,68,.2)}
+.project-card{position:relative}
+.project-card .card-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.project-card .card-header input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex:none}
+.lock-btn{background:none;border:1px solid var(--line2);border-radius:8px;color:var(--muted);cursor:pointer;padding:4px 10px;font-size:13px}
+.lock-btn:hover{color:var(--text)}
+.project-card.locked{opacity:.7}
+.project-card.locked .project-checkbox{display:none}
+.project-card.locked .lock-btn{color:#FFD60A;border-color:rgba(255,214,10,.4)}
+/* ===== Caption Style picker: compact horizontal carousel (100x80 cards) ===== */
+.caption-style-container{width:100%;padding:16px 0}
+.capstyle-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.preset-tabs{display:flex;gap:16px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.preset-tabs button{background:none;border:0;padding:6px 2px;color:var(--muted);font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-9px;font-size:13.5px}
+.preset-tabs button.on{color:#fff;border-color:#fff}
+.carousel-wrapper{position:relative;width:100%}
+.nav-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:10;width:32px;height:32px;border-radius:50%;background:rgba(44,44,46,.9);backdrop-filter:blur(4px);color:#fff;display:flex;align-items:center;justify-content:center;border:1px solid #333;cursor:pointer;font-size:16px;flex:none}
+.nav-arrow.left{left:-16px}
+.nav-arrow.right{right:-16px}
+.nav-arrow:hover{background:#3A3A3C}
+.carousel-track{display:flex;flex-direction:row;gap:12px;overflow-x:auto;padding:8px 16px;scroll-behavior:smooth;scrollbar-width:none}
+.carousel-track::-webkit-scrollbar{display:none}
+.preset-card{flex:0 0 110px;height:85px;background:#1C1C1E;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;border:2px solid transparent;padding:8px;box-sizing:border-box;transition:all .2s ease}
+.preset-card:hover{background:#2C2C2E;transform:translateY(-2px)}
+.preset-card.active{border-color:#0A84FF;box-shadow:0 0 10px rgba(10,132,255,.3)}
+.carousel-track .scard{flex:0 0 110px;width:110px;height:85px;background:#1C1C1E;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;border:2px solid transparent;transition:background .2s,box-shadow .2s;box-shadow:none;padding:8px;box-sizing:border-box;position:relative;overflow:hidden;aspect-ratio:auto}
+.carousel-track .scard:hover{background:#2C2C2E;transform:translateY(-2px)}
+.card-preview{font-size:9px;font-weight:700;text-align:center;line-height:1.2;text-transform:uppercase;width:100%;white-space:normal;word-break:break-word;overflow:hidden;margin-bottom:4px}
+.card-label{font-size:10px;color:#8E8E93;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
+.card-preview.has-box{background-color:#000000;padding:4px 8px;border-radius:4px;box-sizing:border-box}
+.tplx{position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;border:0;background:#ffffff22;color:#fff;cursor:pointer;font-size:12px;line-height:1;display:none;z-index:2}
+.preset-card:hover .tplx,.carousel-track .scard:hover .tplx{display:block}
+.tpladd{border-style:dashed!important;border-color:var(--line2)!important;background:transparent!important}
+.picker-row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start}
+.caption-style-section .liveprev{width:100%;flex:none}
+/* ===== Caption Style section stacked layout ===== */
+.caption-style-section{display:flex;flex-direction:column;align-items:center;gap:24px;width:100%;max-width:800px;margin:0 auto}
+.caption-style-section .caption-style-container{width:100%}
+.video-preview-container{width:100%;max-width:360px;height:auto;aspect-ratio:9/16;border-radius:12px;overflow:hidden;margin-top:16px}
+.video-preview-container .liveprev{width:100%;max-width:100%}
+.video-preview-container img.capprev{width:100%;border-radius:12px}
+/* ===== Caption Style section stacked layout ===== */
+.caption-style-section{display:flex;flex-direction:column;align-items:center;gap:24px;width:100%;max-width:800px;margin:0 auto}
+.caption-style-section .caption-style-container{width:100%}
+.video-preview-container{width:100%;max-width:360px;height:auto;aspect-ratio:9/16;border-radius:12px;overflow:hidden;margin-top:16px}
+.video-preview-container .liveprev{width:100%;max-width:100%}
+.video-preview-container img.capprev{width:100%;border-radius:12px}
 .hero.compact{padding:18px 0 8px;text-align:left}
 .hero.compact h1{font-size:clamp(28px,3.4vw,40px);margin:0 0 6px}
 .hero.compact p{margin:0;font-size:14px}
@@ -681,12 +775,7 @@ function customizeHTML(ov, presetKey) {
   </div>`;
 }
 function styleSectionHTML(preset) {
-  return `<input type="hidden" class="stylePreset" value="${esc(preset || 'bold-pop')}">
-    <div class="seg sampleLang"><button type="button" data-l="en" class="on">English</button><button type="button" data-l="ar">العربية</button></div>
-    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px">
-      <div class="styles styleGrid hscroll" style="flex:1;min-width:0"></div>
-      <div class="liveprev"><video id="homePrev" muted playsinline loop preload="auto"></video><div class="livecap cap" id="homeCap" style="display:none"></div><div class="note" id="homePrevNote" style="position:absolute;inset:auto 8px 8px;text-align:center">Find a video to preview styles on real frames</div></div>
-    </div>`;
+  return stylePickerHTML(preset, `<div class="liveprev"><video id="homePrev" muted playsinline loop preload="auto"></video><div class="livecap cap" id="homeCap" style="display:none"></div><div class="note" id="homePrevNote" style="position:absolute;inset:auto 8px 8px;text-align:center">Find a video to preview styles on real frames</div></div>`);
 }
 function optsPanel(o, compact) {
   const cs = o.caption_style || { preset: 'bold-pop', overrides: {} };
@@ -698,17 +787,12 @@ function optsPanel(o, compact) {
     <div class="field"><span class="fl">Output format</span>${seg('platform', [['shorts', 'YouTube Shorts'], ['reels', 'Facebook Reels'], ['both', 'Both']], o.platform)}</div>
     <div class="field"><span class="fl">Framing</span>${seg('layout', [['crop', 'Center crop'], ['blur_fit', 'Blur fit']], o.layout)}</div>
     <div class="field"><span class="fl">Number of clips</span><input type="number" min="1" max="20" data-opt="clips" value="${o.clips}"></div>
-    <div class="field"><span class="fl">Target length<output>${o.duration}s</output></span><input type="range" min="15" max="120" step="5" data-opt="duration" data-unit="s" value="${o.duration}"></div>
+    <div class="field range-row"><span class="fl">Target length<output>${o.duration}s</output></span><input type="range" min="15" max="180" step="5" data-opt="duration" data-unit="s" value="${o.duration}"><input type="number" value="${o.duration}" min="15" max="180" class="w-16 bg-gray-800 text-white rounded px-2 py-1 text-center"></div>
     <div class="field">${tog('captions', 'Animated captions', o.captions, 'Burn word-by-word captions into the video')}</div>
     <div class="field">${tog('use_llm', 'AI clip scoring', o.use_llm, llmWarn)}</div>
     <div class="field">${tog('zoom', 'Slow zoom', o.zoom, 'Subtle push-in (center crop only, slower)')}</div>
     ${compact ? '' : `<div class="field full"><span class="fl">Caption style</span>
-      <input type="hidden" class="stylePreset" value="${esc(cs.preset || 'bold-pop')}">
-      <div class="seg sampleLang"><button type="button" data-l="en" class="on">English</button><button type="button" data-l="ar">العربية</button></div>
-      <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
-        <div class="styles styleGrid" style="flex:1;min-width:0"></div>
-        <div><img class="capprev capPrev" alt="" hidden><div class="note capPrevNote">Pick a style to preview it on your video</div></div>
-      </div></div>
+      ${stylePickerHTML(cs.preset, `<div><img class="capprev capPrev" alt="" hidden><div class="note capPrevNote">Pick a style to preview it on your video</div></div>`)}</div>
     <div class="field full"><details class="cust"><summary style="cursor:pointer;color:var(--muted);font-weight:600">Customize style</summary><div class="custwrap">${customizeHTML(ov, cs.preset)}</div></details></div>`}</div>`;
 }
 function readStyleRoot(root) {
@@ -748,6 +832,20 @@ function readOpts(root) {
 /* ---------- caption style picker (shared by Home, Regenerate, Edit modal) ---------- */
 const SAMPLES = { en: ['MAKE', 'IT', 'GO', 'VIRAL'], ar: ['اجعل', 'فيديوك', 'ينتشر', 'الآن'] };
 let STYLES = { base: {}, presets: {} }, sampleLang = 'en', tickIdx = 0;
+/* Hardcoded fallback so the carousel never renders blank (used until /api/caption-styles loads, or if it fails) */
+const FALLBACK_BASE = { font: 'Arial', font_ar: 'Arial', size: 72, bold: true, uppercase: true,
+  text_color: '#FFFFFF', highlight_color: '#FFE600', outline_color: '#000000', outline: 4, shadow: 2,
+  highlight_mode: 'color', pill_color: '#FFFFFF', pill_text: '#000000', active_scale: 110 };
+const FALLBACK_PRESETS = {
+  'bold-pop': { label: 'Bold Pop', font: 'Montserrat', highlight_color: '#FFE600' },
+  'hormozi': { label: 'Hormozi', font: 'Anton', highlight_color: '#00F060' },
+  'beast': { label: 'Beast', font: 'Bebas Neue', highlight_color: '#FF3B30' },
+  'clean': { label: 'Clean', font: 'Poppins', highlight_color: '#A78BFA' },
+  'pill': { label: 'Pill', font: 'Poppins', highlight_color: '#FFFFFF' },
+  'neon': { label: 'Neon', font: 'Poppins', highlight_color: '#22E5FF' },
+  'box': { label: 'Box', font: 'Inter', highlight_color: '#FFD60A' },
+};
+STYLES = { base: FALLBACK_BASE, presets: FALLBACK_PRESETS };
 function injectFonts(presets) {
   const seen = new Set(); let css = '';
   Object.values(presets).forEach(p => [[p.font, p.font_file], [p.font_ar, p.font_ar_file]].forEach(([fam, file]) => {
@@ -759,18 +857,55 @@ function wordSpans(p, lang) {
   const ar = lang === 'ar';
   return SAMPLES[lang].map(w => `<span class="w" data-hl="${p.highlight_color}" data-pill="${p.highlight_mode === 'pill' ? p.pill_color : ''}" data-pt="${p.pill_text}" data-sc="${p.active_scale}" style="color:${p.text_color}">${ar || !p.uppercase ? w : w.toUpperCase()}</span>`).join(' ');
 }
-function cardHTML(key, p0, base, sel) {
-  const p = { ...base, ...p0 }, ar = sampleLang === 'ar';
-  const fam = ar ? p.font_ar : p.font, S = n => `calc(${n} * 100cqw / 1080)`;
-  const stroke = p.outline ? `-webkit-text-stroke:${S(p.outline * 2)} ${p.outline_color};paint-order:stroke fill;` : '';
-  const shadow = p.shadow ? `text-shadow:0 ${S(p.shadow * 1.5)} ${S(p.shadow * 2)} #000a;` : '';
-  const boxed = p.box ? `background:${p.box_color}${Math.round(p.box_opacity * 2.55).toString(16).padStart(2, '0')};padding:.1em .4em;border-radius:.2em;` : '';
-  const pos = p.position === 'center' ? 'top:42%' : p.position === 'top' ? 'top:14%' : 'bottom:16%';
-  const words = p.display === 'word'
+function prevStyle(p) {
+  const fam = (sampleLang === 'ar' ? p.font_ar : p.font) || 'Arial';
+  const stroke = p.outline ? `-webkit-text-stroke:1px ${p.outline_color};paint-order:stroke fill;` : '';
+  const shadow = p.shadow ? `text-shadow:0 1px 2px #000a;` : '';
+  const boxed = p.box ? `background:${p.box_color};padding:0 .3em;border-radius:.2em;` : '';
+  return `font-family:'${fam}',Arial;font-weight:${p.bold ? 700 : 400};${stroke}${shadow}${boxed}`;
+}
+function prevWords(p) {
+  return p.display === 'word'
     ? `<span class="w solo" data-words="${SAMPLES[sampleLang].join(',')}" data-hl="${p.highlight_color}" data-pill="${p.highlight_mode === 'pill' ? p.pill_color : ''}" data-pt="${p.pill_text}" data-sc="115" style="color:${p.highlight_color}">${SAMPLES[sampleLang][0]}</span>`
     : wordSpans(p, sampleLang);
-  return `<div class="scard ${key === sel ? 'sel' : ''}" data-k="${key}"><span class="name">${p0.label}</span>
-    <div class="cap" style="${pos};font-family:'${fam}',Arial;font-size:${S(p.size)};font-weight:${p.bold ? 700 : 400};${stroke}${shadow}${boxed}">${words}</div></div>`;
+}
+function cardHTML(key, p0, base, sel) {
+  const p = { ...base, ...p0 };
+  const cls = `${p.box ? 'has-box' : ''} ${p.highlight_mode === 'pill' ? 'is-pill' : ''}`.trim();
+  return `<div class="scard preset-card ${key === sel ? 'sel active' : ''}" data-k="${key}" title="${esc(p0.label || key)}">
+    <div class="cap card-preview ${cls}" style="color:${p.text_color};${prevStyle(p)}">${prevWords(p)}</div>
+    <div class="card-label">${esc(p0.label || key)}</div></div>`;
+}
+function tplCardHTML(t, i, sel) {
+  const p0 = STYLES.presets[t.preset] || {};
+  const p = { ...STYLES.base, ...p0, ...(t.overrides || {}) };
+  const cls = `${p.box ? 'has-box' : ''} ${p.highlight_mode === 'pill' ? 'is-pill' : ''}`.trim();
+  return `<div class="scard preset-card ${t.preset === sel ? 'sel active' : ''}" data-tpl="${i}" data-k="${esc(t.preset || 'bold-pop')}" title="${esc(t.name)}">
+    <button class="tplx" data-tpldel="${i}" title="Delete template">×</button>
+    <div class="cap card-preview ${cls}" style="color:${p.text_color};${prevStyle(p)}">${prevWords(p)}</div>
+    <div class="card-label">${esc(t.name)}</div></div>`;
+}
+const TPL_KEY = 'marrow_templates';
+const getTpls = () => { try { return JSON.parse(localStorage.getItem(TPL_KEY)) || []; } catch (_) { return []; } };
+const setTpls = t => { try { localStorage.setItem(TPL_KEY, JSON.stringify(t)); } catch (_) {} };
+function stylePickerHTML(preset, preview, hiddenAttrs) {
+  return `<input type="hidden" class="stylePreset" ${hiddenAttrs || ''} value="${esc(preset || 'bold-pop')}">
+  <div class="seg sampleLang"><button type="button" data-l="en" class="on">English</button><button type="button" data-l="ar">العربية</button></div>
+  <div class="caption-style-container">
+    <div class="capstyle-head">
+      <div class="preset-tabs"><button type="button" data-st="quick" class="on">Quick presets</button><button type="button" data-st="my">My templates</button></div>
+    </div>
+    <div class="carousel-wrapper">
+      <button type="button" class="nav-arrow left" data-car="-1" title="Scroll left">‹</button>
+      <div class="styles styleGrid carousel-track" style="flex:1;min-width:0"></div>
+      <button type="button" class="nav-arrow right" data-car="1" title="Scroll right">›</button>
+    </div>
+    ${preview ? `<div class="video-preview-container">${preview}</div>` : ''}
+  </div>`;
+}
+function scrollCarousel(direction) {
+  const track = document.querySelector('.carousel-track');
+  if (track) track.scrollBy({ left: direction * 250, behavior: 'smooth' });
 }
 function repaintHomeCap() {
   const cap = $('#homeCap'); if (!cap) return;
@@ -792,20 +927,25 @@ function repaintHomeCap() {
 }
 function paintStyles(root) {
   const grid = $('.styleGrid', root); if (!grid) return;
-  if (!grid.parentElement.classList.contains('pickrow')) {
-    const wrap = document.createElement('div'); wrap.className = 'pickrow';
-    grid.parentElement.insertBefore(wrap, grid); wrap.appendChild(grid);
-    const l = document.createElement('button'); l.className = 'pkarr'; l.type = 'button'; l.textContent = '‹';
-    const r = document.createElement('button'); r.className = 'pkarr'; r.type = 'button'; r.textContent = '›';
-    l.onclick = () => grid.scrollBy({ left: -220 });
-    r.onclick = () => grid.scrollBy({ left: 220 });
-    wrap.prepend(l); wrap.append(r);
-  }
+  const tab = (root.dataset && root.dataset.styleTab) || 'quick';
   const sel = $('.stylePreset', root)?.value || 'bold-pop';
-  grid.innerHTML = Object.entries(STYLES.presets).map(([k, p]) => cardHTML(k, p, STYLES.base, sel)).join('');
+  if (tab === 'my') {
+    const tpls = getTpls();
+    grid.innerHTML = `<div class="scard preset-card tpladd" data-tpladd="1" title="Save the current style as a template"><div class="card-preview" style="font-size:20px">＋</div><div class="card-label">Save current</div></div>`
+      + (tpls.length ? tpls.map((t, i) => tplCardHTML(t, i, sel)).join('')
+        : `<div class="note">No templates yet — tweak a style, then hit “Save current”.</div>`);
+    return;
+  }
+  const entries = Object.entries(STYLES.presets || {});
+  if (!entries.length) {
+    grid.innerHTML = `<div class="note" style="padding:16px">Loading presets...</div>`;
+    return;
+  }
+  grid.innerHTML = entries.map(([k, p]) => cardHTML(k, p, STYLES.base, sel)).join('');
 }
 function mountStyles(root, preset) {
   if ($('.stylePreset', root)) $('.stylePreset', root).value = preset || 'bold-pop';
+  $$('.sampleLang button', root).forEach(x => x.classList.toggle('on', x.dataset.l === sampleLang));
   paintStyles(root);
 }
 function collectOverrides(root) {
@@ -851,10 +991,13 @@ setInterval(() => {
 }, 450);
 (async () => {
   try {
-    STYLES = await (await fetch('/api/caption-styles')).json();
-    injectFonts(STYLES.presets);
-    repaintStyles();
-  } catch (_) {}
+    const d = await (await fetch('/api/caption-styles')).json();
+    if (d && d.presets && Object.keys(d.presets).length) {
+      STYLES = d;
+      try { injectFonts(STYLES.presets); } catch (_) {}
+      repaintStyles();
+    }
+  } catch (_) { /* fallback presets already rendered */ }
 })();
 function repaintStyles() {
   document.querySelectorAll('.styleGrid').forEach(g => {
@@ -863,15 +1006,48 @@ function repaintStyles() {
   });
 }
 document.addEventListener('click', e => {
+  const tdel = e.target.closest('[data-tpldel]');
+  if (tdel) {
+    e.stopPropagation();
+    const scope = tdel.closest('.optbody,.modal,#styleCard,.edside') || document;
+    const tpls = getTpls(); tpls.splice(+tdel.dataset.tpldel, 1); setTpls(tpls);
+    paintStyles(scope); return;
+  }
+  const add = e.target.closest('[data-tpladd]');
+  if (add) {
+    const scope = add.closest('.optbody,.modal,#styleCard,.edside') || document;
+    const name = prompt('Template name:');
+    if (name && name.trim()) {
+      const cur = readStyleRoot(scope);
+      const tpls = getTpls();
+      tpls.push({ name: name.trim().slice(0, 40), preset: cur.preset, overrides: cur.overrides });
+      setTpls(tpls); paintStyles(scope); toast('Template saved', 'ok');
+    }
+    return;
+  }
+  const stb = e.target.closest('.preset-tabs button');
+  if (stb) {
+    const scope = stb.closest('.optbody,.modal,#styleCard,.edside') || document;
+    if (scope.dataset) scope.dataset.styleTab = stb.dataset.st;
+    $$('.preset-tabs button', scope).forEach(x => x.classList.toggle('on', x === stb));
+    paintStyles(scope);
+    return;
+  }
+  const car = e.target.closest('[data-car]');
+  if (car) {
+    const track = car.closest('.caption-style-container')?.querySelector('.carousel-track');
+    if (track) track.scrollBy({ left: 250 * (+car.dataset.car || 1), behavior: 'smooth' });
+    return;
+  }
   const card = e.target.closest('.styleGrid .scard');
-  if (card) {
+  if (card && !card.hasAttribute('data-tpladd')) {
     const scope = card.closest('.optbody,.modal,#styleCard,.edside') || document;
     const hid = $('.stylePreset', scope); if (hid) hid.value = card.dataset.k;
+    const t = (card.dataset.tpl !== undefined && card.dataset.tpl !== '') ? getTpls()[+card.dataset.tpl] : null;
     paintStyles(scope); previewReal(scope); repaintHomeCap();
     if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
-    scope.querySelector('.styleGrid .scard.sel')?.scrollIntoView({ inline: 'center', block: 'nearest' });
     scope.querySelectorAll('.custwrap').forEach(c => {
-      c.innerHTML = customizeHTML(readStyleRoot(scope).overrides, card.dataset.k);
+      c.innerHTML = customizeHTML(t ? (t.overrides || {}) : readStyleRoot(scope).overrides, card.dataset.k);
     });
     return;
   }
@@ -883,11 +1059,9 @@ document.addEventListener('click', e => {
     return;
   }
 });
-document.addEventListener('wheel', e => {
-  const row = e.target.closest?.('.styles.hscroll');
-  if (!row) return;
-  if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); row.scrollLeft += e.deltaY; }
-}, { passive: false });
+document.addEventListener('change', e => {
+  if (e.target.closest?.('#plist .project-checkbox')) updateSelection();
+});
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.type === 'range' && el.dataset.ov) { const out = el.parentElement.querySelector('output'); if (out) out.textContent = el.value + (el.dataset.unit || ''); }
@@ -920,19 +1094,25 @@ function renderSide() {
 async function refreshSystem(fresh) { try { state.system = await api('/api/system' + (fresh ? '?fresh=1' : '')); } catch (_) {} renderSide(); }
 
 /* ---------- project card (home + projects) ---------- */
-function projectCard(p) {
+function projectCard(p, manage) {
   const running = ACTIVE.has(p.status);
   const eng = p.engine?.transcribe ? ` · ${p.engine.transcribe.device === 'cuda' ? 'GPU' : 'CPU'}` : '';
   const total = p.status === 'done' && p.finished && p.started ? ` · ${fmtT(p.finished - p.started)}` : '';
   const meta = p.status === 'done' ? `${p.clips.length} clip${p.clips.length === 1 ? '' : 's'} · ${platLabel(p.settings.platform)}${eng}${total}` :
     p.status === 'error' ? 'Failed' : p.stage;
-  return `<a class="pcard" href="#/p/${p.id}">
+  const inner = `<a class="pcard" href="#/p/${p.id}">
     <div class="pthumb">${p.thumb ? `<img src="${p.thumb}" alt="" loading="lazy">` : `<span class="ph">${p.status === 'error' ? '⚠' : running ? '⏳' : '🎬'}</span>`}
       <span class="pill ${p.status}"><i class="pd"></i>${p.status === 'done' ? 'Ready' : p.status[0].toUpperCase() + p.status.slice(1)}</span>
       ${running ? `<div class="pbar"><i style="width:${Math.round(p.progress * 100)}%"></i></div>` : ''}</div>
     <div class="pbody"><h4>${esc(p.name)}</h4><div class="m">${esc(meta)} · ${fmtDate(p.created)}</div></div></a>`;
+  if (!manage) return inner;
+  return `<div class="project-card ${p.locked ? 'locked' : ''}" data-id="${p.id}">
+    <div class="card-header">
+      <input type="checkbox" class="project-checkbox" data-id="${p.id}" title="Select project">
+      <button class="lock-btn" data-act="lock-proj" data-id="${p.id}" title="${p.locked ? 'Unlock project' : 'Lock project'}">${p.locked ? '🔒' : '🔓'}</button>
+    </div>${inner}</div>`;
 }
-const projSig = list => JSON.stringify(list.map(p => [p.id, p.status, p.stage, p.progress, p.name, p.thumb, p.clips.length]));
+const projSig = list => JSON.stringify(list.map(p => [p.id, p.status, p.stage, p.progress, p.name, p.thumb, p.clips.length, !!p.locked]));
 
 /* ---------- views ---------- */
 const main = $('#main');
@@ -946,18 +1126,18 @@ function viewHome() {
   clearInterval(Home.timer);
   main.innerHTML = `
   ${s && !s.ffmpeg ? `<div class="banner bad">FFmpeg wasn't found on this computer, so clips can't be rendered. Install it (Windows: <code>winget install ffmpeg</code>), then open a new terminal and restart Marrow.</div>` : ''}
-  <section class="hero compact">
+  <section class="hero-section">
     <div class="eyebrow">Local AI video clipping</div>
-    <h1>1 long video, many viral clips.</h1>
-    <p class="sub">Paste a link or upload a video — Marrow finds the strongest moments and exports captioned Shorts and Reels.</p>
+    <h1 class="hero-title">1 long video, many viral clips.</h1>
+    <p class="hero-subtitle">Paste a link or upload a video — Marrow finds the strongest moments and exports captioned Shorts and Reels.</p>
   </section>
   <div class="home">
     <div class="home-left">
       <div class="dropbox" id="dropbox">
         <div class="urlrow"><input type="text" id="url" placeholder="Drop a video link (YouTube, Vimeo, X and more)" value="${esc(state.url)}" autocomplete="off" spellcheck="false">
           <button class="btn primary lg" id="findBtn">Find video</button></div>
-        <div class="or">or</div>
-        <div class="uprow" id="uprow"></div>
+        <div class="or-divider"><span>or</span></div>
+        <div class="uprow upload-dropzone" id="uprow"></div>
         <div class="upbar" id="upbar" hidden><i></i></div>
       </div>
       <div id="foundWrap" style="margin-top:14px"></div>
@@ -1017,6 +1197,17 @@ async function pollProbe() {
     if (p.state === 'ready') { clearInterval(Home.timer); setFoundReady(p); }
   } catch (_) {}
 }
+function friendlyProbeError(msg) {
+  const m = String(msg || '');
+  if (/sign in to confirm|not a bot|\bbot\b/i.test(m))
+    return { title: 'YouTube Security Check', body: "YouTube blocked this request. Enable 'Use browser cookies' in Settings → Advanced → Cookies, or try a different video.", warn: true, settings: true };
+  if (/403|forbidden|cookie/i.test(m))
+    return { title: 'Download blocked', body: 'YouTube refused the download (403). Sign in to YouTube in your browser, then enable "Use browser cookies" in Settings → Advanced → Cookies.', warn: true, settings: true };
+  if (/private|unavailable|deleted|region|geo-block| 404/i.test(m))
+    return { title: 'Video unavailable', body: 'This video cannot be accessed. It may be private, deleted, or region-blocked.', warn: true };
+  const first = m.split('\n')[0].replace(/^ERROR:\s*/i, '').slice(0, 220);
+  return { title: 'Download failed', body: first || 'Could not fetch this video.', warn: false };
+}
 function setFoundState(st, msg) {
   Home.hstate = st;
   const w = $('#foundWrap'); if (!w) return;
@@ -1024,7 +1215,8 @@ function setFoundState(st, msg) {
     w.innerHTML = `<div class="skel"><div class="hline"></div><div class="schip tl">FETCHING VIDEO…</div><div class="note" style="margin-top:44px">Reading title, thumbnail and preview…</div></div>`;
     const r = $('#recent'); if (r) r.style.display = 'none';
   } else if (st === 'error') {
-    w.innerHTML = `<div class="banner bad">${esc(msg || 'Could not fetch this video.')}</div>`;
+    const f = friendlyProbeError(msg);
+    w.innerHTML = `<div class="banner ${f.warn ? 'warn' : 'bad'}"><b>${esc(f.title)}</b><div style="margin-top:4px">${esc(f.body)}</div>${f.settings ? `<div style="margin-top:10px"><button class="btn sm" data-act="go-settings">Go to Settings</button></div>` : ''}</div>`;
   } else w.innerHTML = '';
 }
 function fmtDur(sec) { return sec == null ? '–' : fmtT(sec); }
@@ -1055,9 +1247,16 @@ function setFoundReady(p) {
 function paintUploadRow() {
   const row = $('#uprow'); if (!row) return;
   const p = state.pending;
-  if (p) row.innerHTML = `<div class="filechip">🎞 <b>${esc(p.name)}</b><span>${p.upload ? '✓ uploaded' : Math.round((state.uploadPct || 0) * 100) + '%'}</span><button class="icon" data-act="rm-upload" title="Remove">✕</button></div>`;
-  else row.innerHTML = `<label class="btn ghost">⬆ Upload a video<input type="file" id="file" accept="video/*,.mkv" hidden></label><span>or drag &amp; drop a file here (mp4, mov, mkv, webm)</span>`;
-  const f = $('#file', row); if (f) f.onchange = () => { if (f.files[0]) handleFile(f.files[0]); };
+  if (p) {
+    row.innerHTML = `<div class="filechip">🎞 <b>${esc(p.name)}</b><span>${p.upload ? '✓ uploaded' : Math.round((state.uploadPct || 0) * 100) + '%'}</span><button class="icon" data-act="rm-upload" title="Remove">✕</button></div>`;
+    row.classList.add('drag');
+  } else {
+    row.innerHTML = `<button class="btn secondary" id="fileBtn">⬆ Upload a video</button><input type="file" id="file" accept="video/*,.mkv" hidden><p>or drag & drop a file here (mp4, mov, mkv, webm)</p>`;
+    row.classList.remove('drag');
+    const fBtn = $('#fileBtn', row);
+    if (fBtn) fBtn.onclick = () => { const f = $('#file', row); if (f) f.click(); };
+  }
+  const f = $('#file', row); if (f) f.onchange = () => { if (f.files[0]) handleFile(f.files[0]) };
   const bar = $('#upbar'); if (bar) { bar.hidden = !(p && !p.upload); $('i', bar).style.width = Math.round((state.uploadPct || 0) * 100) + '%'; }
   setGenBtn();
 }
@@ -1121,16 +1320,73 @@ async function startProject() {
 }
 
 function viewProjects() {
-  main.innerHTML = `<div class="sechead" style="margin-top:0"><h2>Projects</h2><input class="search" id="search" placeholder="Search projects…"></div><div id="plist"></div>`;
-  $('#search').addEventListener('input', paintProjects); paintProjects();
+  main.innerHTML = `<div class="sechead" style="margin-top:0"><h2>Projects</h2><input class="search" id="search" placeholder="Search projects…"></div>
+  <div class="bulkbar"><div class="selrow"><input type="checkbox" id="select-all" title="Select all"><label for="select-all">Select All</label>
+    <button id="delete-selected" class="btn-danger" hidden>Delete Selected</button></div></div>
+  <div id="plist"></div>`;
+  $('#search').addEventListener('input', paintProjects);
+  $('#select-all').addEventListener('change', toggleSelectAll);
+  $('#delete-selected').addEventListener('click', deleteSelected);
+  paintProjects();
+}
+const selectedProjects = new Set();
+function updateDeleteButton() {
+  const btn = $('#delete-selected'); if (!btn) return;
+  btn.hidden = selectedProjects.size === 0;
+  btn.textContent = `Delete Selected${selectedProjects.size ? ` (${selectedProjects.size})` : ''}`;
+}
+function toggleSelectAll() {
+  const on = $('#select-all')?.checked;
+  $$('#plist .project-checkbox').forEach(cb => {
+    if (cb.closest('.project-card')?.classList.contains('locked')) return;
+    cb.checked = !!on;
+    const id = cb.dataset.id;
+    if (on) selectedProjects.add(id); else selectedProjects.delete(id);
+  });
+  updateDeleteButton();
+}
+function updateSelection() {
+  selectedProjects.clear();
+  $$('#plist .project-checkbox:checked').forEach(cb => selectedProjects.add(cb.dataset.id));
+  const all = $$('#plist .project-checkbox').filter(cb => !cb.closest('.project-card')?.classList.contains('locked'));
+  const sa = $('#select-all');
+  if (sa) sa.checked = all.length > 0 && all.every(cb => cb.checked);
+  updateDeleteButton();
+}
+async function toggleLock(pid) {
+  try {
+    const p = await api(`/api/projects/${pid}/lock`, { method: 'POST', body: {} });
+    mergeProject(p); paintProjects();
+    toast(p.locked ? 'Project locked' : 'Project unlocked', 'ok');
+  } catch (e) { toast(e.message, 'bad'); }
+}
+async function deleteSelected() {
+  const ids = [...selectedProjects].filter(id => {
+    const p = state.projects.find(x => x.id === id);
+    return p && !p.locked;
+  });
+  if (!ids.length) { toast('Nothing to delete.', 'info'); return; }
+  const r = await confirmBox({ title: `Delete ${ids.length} project${ids.length === 1 ? '' : 's'}?`, text: 'Exports will be removed from disk. Locked projects are skipped.', ok: 'Delete', danger: true });
+  if (!r.ok) return;
+  let n = 0;
+  for (const id of ids) {
+    try { await api(`/api/projects/${id}?purge=0`, { method: 'DELETE' }); n++; }
+    catch (e) { toast(e.message, 'bad'); }
+  }
+  state.projects = state.projects.filter(x => !ids.includes(x.id));
+  selectedProjects.clear();
+  paintProjects();
+  toast(n ? `Deleted ${n} project${n === 1 ? '' : 's'}` : 'Nothing deleted', n ? 'ok' : 'info');
 }
 function paintProjects() {
   const box = $('#plist'); if (!box) return;
   const q = ($('#search')?.value || '').toLowerCase();
   const list = state.projects.filter(p => p.name.toLowerCase().includes(q) || (p.source || '').toLowerCase().includes(q));
   const sig = projSig(list) + q; if (box.dataset.sig === sig) return; box.dataset.sig = sig;
-  box.innerHTML = list.length ? `<div class="pgrid">${list.map(projectCard).join('')}</div>` :
+  box.innerHTML = list.length ? `<div class="pgrid">${list.map(p => projectCard(p, true)).join('')}</div>` :
     `<div class="empty">${state.projects.length ? 'No projects match your search.' : 'No projects yet. Go to Home and paste a link.'}</div>`;
+  $$('#plist .project-checkbox').forEach(cb => { cb.checked = selectedProjects.has(cb.dataset.id); });
+  updateSelection();
 }
 
 /* ----- project page ----- */
@@ -1343,10 +1599,11 @@ function cardEl(p, c, sig) {
     <div class="meta"><div class="thead"><h3 dir="auto" title="${esc(c.title)}">${esc(c.title)}</h3><button class="icon tcopy" data-act="copy-title" title="Copy title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div>
       ${c.last_error ? `<div class="cerr">Last re-render failed: ${esc(c.last_error)}</div>` : ''}
       <div class="acts">
-        <button class="btn primary sm" data-act="export-clip">Download</button>
-        <button class="btn sm" data-act="edit-clip">Edit</button>
-        <button class="btn sm" data-act="subs-clip">Subtitles</button>
-        <details class="menu"><summary class="btn sm">⋯</summary><div class="pop">
+        <button class="btn primary sm" data-act="download-clip">Download</button>
+        <button class="btn ghost sm" data-act="export-clip">Export</button>
+        <button class="btn ghost sm" data-act="edit-clip">Edit</button>
+        <details class="menu"><summary class="btn sm ghost">⋯</summary><div class="pop">
+          <button data-act="subs-clip">Subtitles</button>
           <button data-act="copy-title">Copy title</button>
           <button data-act="copy-caption">Copy caption + tags</button>
           <button class="danger" data-act="del-clip">Delete clip</button>
@@ -1355,6 +1612,17 @@ function cardEl(p, c, sig) {
   return el;
 }
 function clipOf(btn) { const el = btn.closest('.tile,.clip'); const p = curProject(); return { el, p, c: p.clips.find(x => String(x.rank) === el.dataset.rank) }; }
+function downloadClip(pid, plat, c) {
+  const src = c.urls[plat] || c.urls[c.platforms[0]];
+  if (!src) { toast('Nothing to download yet.', 'info'); return; }
+  const base = src.split('?')[0];
+  const filename = decodeURIComponent(base.split('/').pop() || `clip_${c.rank}.mp4`);
+  const a = document.createElement('a');
+  a.href = base + '?download=1';
+  a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('Downloading…', 'ok');
+}
 /* ---------- fullscreen viewer ---------- */
 const Viewer = (() => {
   let el, list = [], i = 0;
@@ -1585,12 +1853,7 @@ function openEdit(p, c, tab = 'trim') {
         <label class="tog" style="margin-top:8px"><input type="checkbox" id="ed-livecap" checked><span class="knob"></span><span class="tl">Caption preview<small>HTML overlay on the raw source (no burned-in captions here)</small></span></label>
         <p class="note">Clips must be at least 5 seconds. Start and end are positions in the source video.</p></div></div></div>
     <div data-pane="caps" hidden>
-      <input type="hidden" class="stylePreset" value="${esc(cs.preset || 'bold-pop')}">
-      <div class="seg sampleLang"><button type="button" data-l="en" class="on">English</button><button type="button" data-l="ar">العربية</button></div>
-      <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
-        <div class="styles styleGrid" style="flex:1;min-width:0"></div>
-        <div><img class="capprev capPrev" alt="" hidden><div class="note capPrevNote">Pick a style for a real-frame preview</div></div>
-      </div>
+      ${stylePickerHTML(cs.preset, `<div><img class="capprev capPrev" alt="" hidden><div class="note capPrevNote">Pick a style for a real-frame preview</div></div>`)}
       <div class="custwrap">${customizeHTML(cs.overrides, cs.preset)}</div>
       <div class="form" style="margin-top:12px"><div class="field">${tog('ed-cap', 'Burn in captions', true)}</div></div>
       <div class="fl" style="margin:16px 0 8px">Caption text <span style="font-weight:400">(edit any word; changed words are highlighted)</span></div>
@@ -1843,9 +2106,7 @@ function viewEdits() {
       <div class="edside">
         <div class="tabs" id="edx-tabs"><button class="on" data-tab="caps">Captions</button><button data-tab="frame">Framing</button><button data-tab="trim">Trim</button><button data-tab="text">Text</button></div>
         <div data-pane="caps">
-          <input type="hidden" class="stylePreset" id="edx-preset" value="bold-pop">
-          <div class="seg sampleLang"><button type="button" data-l="en" class="on">English</button><button type="button" data-l="ar">العربية</button></div>
-          <div class="styles styleGrid hscroll" style="margin-top:8px"></div>
+          ${stylePickerHTML('bold-pop', '', 'id="edx-preset"')}
           <div class="custwrap" id="edx-cust" style="margin-top:8px"></div>
         </div>
         <div data-pane="frame" hidden>
@@ -2200,6 +2461,8 @@ const actions = {
   'copy-title'(b) { copyText(clipOf(b).c.title, 'Title copied'); const m = b.closest('details'); if (m) m.removeAttribute('open'); },
   'copy-tags'(b) { copyText(clipOf(b).c.hashtags.map(t => '#' + t).join(' '), 'Hashtags copied'); const m = b.closest('details'); if (m) m.removeAttribute('open'); },
   'export-clip'(b) { const { p, c } = clipOf(b); openExport(p.id, [c.rank], false); },
+  'download-clip'(b) { const { p, c, el } = clipOf(b); downloadClip(p.id, el?.dataset.plat || c.platforms[0], c); },
+  'lock-proj'(b) { toggleLock(b.dataset.id); },
   'export-all'() { const p = curProject(); openExport(p.id, p.clips.map(c => c.rank), true); },
   'copy-error'(b) { copyText(curProject().error || 'Unknown error', 'Error details copied'); },
   'go-settings'() { location.hash = '#/settings'; },

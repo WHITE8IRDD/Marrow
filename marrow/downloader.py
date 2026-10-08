@@ -40,6 +40,7 @@ def ydl_opts(cfg, base=None):
         "continuedl": True,
     })
     ck = (cfg or {}).get("cookies", {}) if isinstance(cfg, dict) else {}
+    log.info("Using cookies from browser: %s", ck.get("from_browser", "None"))
     if ck.get("from_browser"):
         o["cookiesfrombrowser"] = (ck["from_browser"],)
     if ck.get("cookiefile"):

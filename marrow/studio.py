@@ -302,6 +302,10 @@ def export_clip(cfg, media, workdir, words, rank, start, end, spec, out_path,
     d = Path(workdir) / "ass_export"
     d.mkdir(parents=True, exist_ok=True)
     ensure_fonts(d)
+    _st = spec.get("style") if isinstance(spec.get("style"), dict) else {}
+    style = {"preset": _st.get("preset"),
+             "overrides": _st.get("overrides") if isinstance(_st.get("overrides"), dict) else {},
+             "font": cfg["captions"].get("font", "Arial")}
     enc = pick_export_encoder(q["h"], cfg["render"].get("encoder", "auto"))
     crf = q["crf"]
     try:

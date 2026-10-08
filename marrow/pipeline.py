@@ -163,7 +163,22 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
                 eta.update("download", 1.0)
                 eta_holder["eta"] = eta
         emit("Extracting audio", 0.08)
-        run_ffmpeg(["-i", asrc, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", audio_path])
+        try:
+            run_ffmpeg(["-i", asrc, "-map", "0:a:0?", "-vn", "-sn", "-dn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", audio_path])
+            audio_ok = audio_path.exists() and audio_path.stat().st_size > 1000
+        except RuntimeError:
+            audio_ok = False
+        if not audio_ok:
+            # Preview proxies are video-only (-an): fall back to the full source.
+            if have_full is None:
+                src = fetch_source(src, source, cfg)
+                tick("download")
+                if eta:
+                    eta.update("download", 1.0)
+                have_full, full_audio_only = _find_source(src.workdir)
+            if have_full is None:
+                raise RuntimeError("ffmpeg failed: no audio stream found")
+            run_ffmpeg(["-i", have_full, "-map", "0:a:0?", "-vn", "-sn", "-dn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", audio_path])
         tick("audio")
     if eta:
         eta.update("audio", 1.0)

@@ -338,7 +338,8 @@ class App:
         clips.sort(key=lambda c: c["rank"])
         thumb = next((c["thumb"] for c in clips if c["thumb"]), None)
         keys = ("id", "name", "source", "source_kind", "status", "stage", "progress", "created",
-                "started", "finished", "error", "video_id", "settings", "engine", "eta_sec", "eta_at")
+                "started", "finished", "error", "video_id", "settings", "engine", "eta_sec", "eta_at",
+                "locked")
         out = {k: p.get(k) for k in keys}
         out.update(clips=clips, thumb=thumb,
                    scan=p.get("scan"), candidates=p.get("candidates", []),
@@ -414,6 +415,7 @@ class App:
         p = {"id": pid, "name": name, "source": source, "source_kind": kind, "status": "queued",
              "stage": "Waiting in queue", "progress": 0.0, "created": time.time(), "started": None,
              "finished": None, "error": None, "video_id": None, "settings": settings, "clips": [],
+             "locked": False,
              "probe_id": str(probe_id) if probe_id else None}
         with self.lock:
             self.projects[pid] = p
@@ -450,6 +452,8 @@ class App:
     def delete_project(self, pid, purge):
         with self.lock:
             p = self.get(pid)
+            if p.get("locked"):
+                raise ApiError("Project is locked. Unlock it before deleting.", 409)
             if p["status"] == "running":
                 raise ApiError("Cancel the running job before deleting this project.", 409)
             self.cancel.add(pid)  # a queued task for this id will be skipped
@@ -472,6 +476,13 @@ class App:
         with self.lock:
             p = self.get(pid)
             p["name"] = name
+            self._save()
+        return self.public(p)
+
+    def set_locked(self, pid, body):
+        with self.lock:
+            p = self.get(pid)
+            p["locked"] = bool((body or {}).get("locked", not p.get("locked")))
             self._save()
         return self.public(p)
 
@@ -819,6 +830,24 @@ class App:
         except (TypeError, ValueError):
             fps = 0
 
+        def _provided(v):
+            return v is not None and (not isinstance(v, str) or v.strip() != "")
+
+        def _num_strict(v, lo, hi, err):
+            if not _provided(v):
+                return None
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                raise ApiError(err, 400)
+            if not (lo <= f <= hi):
+                raise ApiError(err, 400)
+            return f
+
+        crf = _num_strict(adv.get("crf"), 16, 32, "Invalid CRF value (16-32)")
+        mbps = _num_strict(adv.get("video_mbps"), 1, 80, "Bitrate out of bounds (1-80 Mbps)")
+        ab = _num_strict(adv.get("audio_kbps"), 64, 320, "Invalid audio bitrate (64-320 kbps)")
+
         def _num(v, lo, hi):
             try:
                 v = float(v)
@@ -832,13 +861,13 @@ class App:
                 "480p", "720p", "1080p", "1440p", "source") else "1080p",
             "captions": bool(raw.get("captions", True)),
             "style": {"preset": st.get("preset") if st.get("preset") in PRESETS else None,
-                      "overrides": clean_overrides(st.get("overrides"))},
+                      "overrides": clean_overrides(st.get("overrides", {}))},
             "framing": raw.get("framing") if raw.get("framing") in (
                 "auto", "crop", "blur_fit", "stacked", "face") else "auto",
             "advanced": {"fps": fps if fps in (30, 60) else 0,
-                         "crf": _num(adv.get("crf"), 16, 32),
-                         "video_mbps": _num(adv.get("video_mbps"), 1, 80),
-                         "audio_kbps": _num(adv.get("audio_kbps"), 64, 320)},
+                         "crf": crf,
+                         "video_mbps": mbps,
+                         "audio_kbps": ab},
         }
 
     def export_cache_key(self, c, spec, edits=None):
@@ -1420,6 +1449,11 @@ def r_cancel(h, q, pid):
 @route("DELETE", r"/api/projects/([0-9a-f]+)")
 def r_delete(h, q, pid):
     h.send_json(h.app.delete_project(pid, (q.get("purge") or ["0"])[0] == "1"))
+
+
+@route("POST", r"/api/projects/([0-9a-f]+)/lock")
+def r_lock(h, q, pid):
+    h.send_json(h.app.set_locked(pid, h.read_json()))
 
 
 @route("PATCH", r"/api/projects/([0-9a-f]+)")
