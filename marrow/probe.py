@@ -10,6 +10,8 @@ import time
 import uuid
 from pathlib import Path
 
+from .downloader import PLAYER_CLIENT_CHAIN, give_up, is_blocked_error
+
 PROBES = {}                      # id -> dict(state, info, progress, error, dir)
 _LOCK = threading.Lock()
 MAX_AGE = 24 * 3600
@@ -20,9 +22,9 @@ PREVIEW_FORMATS = (
     "b[height<=480]/b",                       # one file, 480p or smaller
     "b",                                      # anything playable
 )
-# None = yt-dlp's default client; the others are YouTube player clients that often
-# work when the default is blocked or offers no usable formats.
-PLAYER_CLIENTS = (None, ["web"], ["android"])
+# Same chain as the real download (downloader.PLAYER_CLIENT_CHAIN), so the preview and the
+# download can never disagree about which clients are tried.
+PLAYER_CLIENTS = PLAYER_CLIENT_CHAIN
 
 
 def _opts(cfg, extra=None, client=None):
@@ -41,7 +43,7 @@ def probe(url, cfg=None):
     """Metadata only. Raises the last error when every player client fails."""
     import yt_dlp
 
-    last = None
+    errors = []
     for client in PLAYER_CLIENTS:
         try:
             with yt_dlp.YoutubeDL(_opts(cfg, {"skip_download": True}, client)) as y:
@@ -51,8 +53,8 @@ def probe(url, cfg=None):
                     "live": bool(i.get("is_live")), "url": i.get("webpage_url") or url,
                     "video_id": i.get("id")}
         except Exception as e:  # try the next player client
-            last = e
-    raise last
+            errors.append(e)
+    raise give_up(errors, "Reading the video", cfg, url=url)
 
 
 def preview_file(d):
@@ -84,7 +86,7 @@ def fetch_preview(pid, url, out_dir, cfg=None):
                 if pid in PROBES:
                     PROBES[pid]["progress"] = round(d.get("downloaded_bytes", 0) / tot, 3) if tot else 0
 
-    last = None
+    errors = []
     for client in PLAYER_CLIENTS:
         for fmt in PREVIEW_FORMATS:
             opts = _opts(cfg, {"format": fmt, "merge_output_format": "mp4", "progress_hooks": [hook],
@@ -96,11 +98,15 @@ def fetch_preview(pid, url, out_dir, cfg=None):
                 if preview_file(out_dir):
                     _clear_intermediates(out_dir)
                     return
-                last = RuntimeError("the preview file was not written")
+                errors.append(RuntimeError("the preview file was not written"))
             except Exception as e:  # next format / client
-                last = e
+                errors.append(e)
+                if is_blocked_error(e):
+                    break  # this client is refused; other formats from it won't help
     _clear_intermediates(out_dir)
-    raise RuntimeError(f"no playable preview ({type(last).__name__}: {str(last)[:200]})")
+    last = errors[-1] if errors else RuntimeError("no preview was attempted")
+    raise give_up(errors, "The preview", cfg, url=url,
+                  fallback=f"no playable preview ({type(last).__name__}: {str(last)[:200]})")
 
 
 def _strip_preview(out_dir):
@@ -156,9 +162,11 @@ def start(url, base_dir, cfg=None):
             with _LOCK:
                 PROBES[pid].update(state="ready", progress=1.0)
         except Exception as e:
+            # User-facing messages (sign-in checks, 403s) are shown as written; anything else keeps its type.
+            text = str(e)[:300] if getattr(e, "user_facing", False) else f"{type(e).__name__}: {str(e)[:300]}"
             with _LOCK:
                 if pid in PROBES:
-                    PROBES[pid].update(state="error", error=f"{type(e).__name__}: {str(e)[:300]}")
+                    PROBES[pid].update(state="error", error=text)
 
     threading.Thread(target=run, daemon=True, name=f"marrow-probe-{pid}").start()
     return pid

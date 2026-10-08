@@ -234,6 +234,13 @@ def clean_global_settings(raw):
 
 # --------------------------------------------------------------------------- app state
 
+def error_text(e):
+    """What a failed job shows: user-facing messages as written, anything else with its type."""
+    if getattr(e, "user_facing", False):
+        return str(e)[:1500]
+    return f"{type(e).__name__}: {str(e)[:1500]}"
+
+
 class App:
     def __init__(self, home):
         self.home = Path(home).resolve()
@@ -753,7 +760,7 @@ class App:
         except Exception as e:
             log.exception("Pipeline failed")
             with self.lock:
-                p.update(status="error", stage="Failed", error=f"{type(e).__name__}: {str(e)[:1500]}")
+                p.update(status="error", stage="Failed", error=error_text(e))
                 self._clear_live(p)
                 self._save()
 
@@ -1133,6 +1140,13 @@ class App:
             "gpu": False,
             "gpu_error": None,
         }
+        try:  # YouTube setup: yt-dlp version, JavaScript runtime, solver and cookies
+            from . import diagnostics
+
+            info["ytdlp"] = diagnostics.ytdlp_status()
+            info["cookies"] = diagnostics.cookie_status(cfg["cookies"])
+        except Exception as e:  # a broken check must never hide the rest of the status
+            info["ytdlp"], info["cookies"] = {"error": f"{type(e).__name__}: {e}"}, {}
         try:
             from .transcriber import cuda_ready
 

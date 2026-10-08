@@ -83,9 +83,17 @@ clips perform best well under the cap, so the default `clip.max_duration` is 60 
   use a smaller model such as `llama3.2:3b`.
 - **Ollama not reachable**: start the Ollama app. Marrow falls back to heuristic ranking and
   logs a warning.
-- **Find video says 403 or "not a bot"**: open Settings → YouTube cookies and pick your browser (or a cookies.txt file). The preview uses the same cookies as the download now, and when the preview itself fails you can still press "Try generating anyway".
-- **yt-dlp download errors**: run `pip install -U yt-dlp`. YouTube changes often, and recent
-  yt-dlp releases may also need a JavaScript runtime such as Deno (see the yt-dlp docs).
+- **"Sign in to confirm you're not a bot", or 403 Forbidden, for a YouTube link**: YouTube wants a
+  signed-in session, or a player that can run its JavaScript. Do these in order, then press Retry:
+  1. Update the YouTube tools: `pip install -U "yt-dlp[default,deno]"`. The `deno` extra installs the
+     JavaScript runtime and `default` installs the solver (`yt-dlp-ejs`). Node.js works too.
+     Settings → System check shows what is missing.
+  2. Open Settings → YouTube cookies. Sign in to YouTube in Firefox (or in Chrome or Edge with that
+     browser closed), then pick that browser, or choose a cookies.txt file exported while signed in.
+  Marrow already tries yt-dlp's default client, then the other clients that do not need a PO token,
+  so no other setting is needed. If it still fails, try again later or from another network.
+- **Other yt-dlp download errors**: run `pip install -U "yt-dlp[default,deno]"`. YouTube changes
+  often, so keep yt-dlp current.
 - **Captions use the wrong font**: install the font on your system and set `captions.font`
   to its exact family name.
 

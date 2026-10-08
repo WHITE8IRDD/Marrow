@@ -729,9 +729,9 @@ async function pollProbe() {
 function friendlyProbeError(msg) {
   const m = String(msg || '');
   if (/sign in to confirm|not a bot|\bbot\b/i.test(m))
-    return { title: 'YouTube asked for a sign-in check', body: 'Add your YouTube cookies under Settings → Cookies (pick your browser, or a cookies.txt file), then try again.', warn: true, settings: true };
+    return { title: 'YouTube asked for a sign-in check', body: 'Marrow tried every YouTube client. Sign in to YouTube in Firefox (or in Chrome or Edge with that browser closed), then pick it under Settings → YouTube cookies. If it still fails, run: pip install -U "yt-dlp[default,deno]".', warn: true, settings: true };
   if (/403|forbidden/i.test(m))
-    return { title: 'YouTube blocked the preview (403)', body: 'Sign in to YouTube in your browser and choose it under Settings → Cookies. You can still generate: Marrow retries with other clients.', warn: true, settings: true };
+    return { title: 'YouTube refused the preview (403)', body: 'Pick a browser you are signed in to under Settings → YouTube cookies, and run: pip install -U "yt-dlp[default,deno]". You can still generate: Marrow retries with other clients.', warn: true, settings: true };
   if (/private|unavailable|deleted|region|geo|404|not found/i.test(m))
     return { title: 'Video unavailable', body: 'This video can’t be accessed. It may be private, deleted, or blocked in your region.', warn: true };
   if (/no playable preview|not written/i.test(m))
@@ -951,8 +951,12 @@ function paintProjects() {
 /* ----- project page ----- */
 function friendlyError(err) {
   const e = err || '';
-  if (/403|Forbidden/i.test(e)) return ['Download failed', 'YouTube blocked this request (403 Forbidden).',
-    'Try: sign in to YouTube in your browser, then enable "Use browser cookies" in Settings → Advanced → Cookies.'];
+  if (/not a bot|sign in to confirm|sign in to youtube/i.test(e)) return ['YouTube asked for a sign-in check',
+    'Marrow tried every YouTube client it has, and YouTube still wants a signed-in browser session.',
+    'Update yt-dlp (pip install -U "yt-dlp[default,deno]"), then open Settings → YouTube cookies, sign in to YouTube in that browser and pick it. Press Retry.'];
+  if (/403|Forbidden/i.test(e)) return ['YouTube refused the request (403)',
+    'Every player client was refused with 403 Forbidden.',
+    'Update yt-dlp, set YouTube cookies under Settings → YouTube cookies, then press Retry. If it keeps failing, try again later or from another network.'];
   if (/Live streams?/i.test(e)) return ['Live stream', 'Live streams are not supported.',
     'Wait for the stream to end and become a regular video.'];
   if (/Private|unavailable|404|not found|region|geo-block/i.test(e)) return ['Video unavailable', 'This video cannot be accessed.',
@@ -1991,7 +1995,7 @@ function viewSettings() {
         <div class="actions" style="margin-top:14px"><button class="btn" data-act="open-folder">${ico('folder')}Open data folder</button></div>
       </section>
       <section class="card">
-        <div class="card-head"><div><h3>YouTube cookies</h3><p class="hint">Fixes most “403 Forbidden” and “not a bot” errors, for both the preview and the download.</p></div></div>
+        <div class="card-head"><div><h3>YouTube cookies</h3><p class="hint">Used by the preview and the download. Firefox is usually the least trouble: sign in to YouTube in it, then pick it here. A cookies.txt file works with any browser.</p></div></div>
         <div class="form">
           <div class="field"><span class="fl">Use cookies from browser</span>${sel('s-cookie', [['', 'None'], ['chrome', 'Chrome'], ['firefox', 'Firefox'], ['edge', 'Edge'], ['brave', 'Brave'], ['safari', 'Safari']], s.cookies?.from_browser || '')}</div>
           <div class="field"><span class="fl">…or a cookies.txt file</span><input class="txt" id="s-cookiefile" placeholder="C:\\cookies.txt" value="${esc(s.cookies?.cookiefile || '')}"></div>
@@ -2039,7 +2043,16 @@ function paintSysCheck() {
   const box = $('#syscheck'); if (!box) return; const s = state.system;
   if (!s) { box.textContent = 'Checking…'; return; }
   const row = (cls, t, d) => `<div class="chk"><span class="dot ${cls}"></span><span><span class="t">${t}</span> <span class="d">${d}</span></span></div>`;
+  // YouTube setup: the four checks that decide whether a "not a bot" error can be fixed here.
+  const yt = s.ytdlp || {}, ck = s.cookies || {};
+  const ytRow = yt.version
+    ? row(yt.new_enough ? 'ok' : 'warn', 'yt-dlp', `${esc(yt.version)} · ${yt.new_enough ? 'new enough for YouTube' : 'too old for YouTube: run pip install -U "yt-dlp[default,deno]"'}`)
+    : row('bad', 'yt-dlp', yt.error ? esc(yt.error) : 'not installed: pip install -U "yt-dlp[default,deno]"');
   box.innerHTML = row(s.ffmpeg ? 'ok' : 'bad', 'FFmpeg', s.ffmpeg ? 'found' : 'not found — install it and restart Marrow') +
+    ytRow +
+    row(yt.js_runtime ? 'ok' : 'warn', 'JavaScript runtime', yt.js_runtime ? `${esc(yt.js_runtime)} found` : 'none. YouTube needs one: pip install deno, or install Node.js') +
+    row(yt.solver ? 'ok' : 'warn', 'YouTube solver', yt.solver ? 'yt-dlp-ejs installed' : 'missing: pip install -U "yt-dlp[default]"') +
+    row(ck.ok ? 'ok' : (ck.source === 'none' ? 'warn' : 'bad'), 'YouTube cookies', esc(ck.message || 'not checked')) +
     row(s.gpu ? 'ok' : 'warn', 'Whisper on GPU', s.gpu ? 'working' : 'failed — ' + esc(s.gpu_error || 'no CUDA GPU') + ' (transcription uses the CPU)') +
     row(s.encoder === 'h264_nvenc' ? 'ok' : '', 'Encoder', s.encoder === 'h264_nvenc' ? 'NVENC (GPU)' : 'libx264 (CPU)') +
     row(s.libass === false ? 'warn' : 'ok', 'ASS captions', s.libass === false ? 'libass filter not found in FFmpeg — captions may not render' : 'libass available') +
