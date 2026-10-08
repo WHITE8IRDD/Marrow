@@ -16,7 +16,7 @@ import pytest
 
 from marrow import diagnostics, downloader, probe
 from marrow.downloader import (PLAYER_CLIENT_CHAIN, YouTubeBlockedError, download_with_fallback,
-                               is_blocked_error, resolve_source, ydl_opts)
+                               fetch_source, is_blocked_error, resolve_source, ydl_opts)
 
 URL = "https://www.youtube.com/watch?v=abc123"
 SIGN_IN = ("ERROR: [youtube] abc123: Sign in to confirm you\u2019re not a bot. Use --cookies-from-browser "
@@ -60,17 +60,22 @@ def _fake_yt_dlp(monkeypatch, behaviour):
     return calls
 
 
-def test_chain_starts_with_yt_dlp_default_and_only_names_clients_without_po_token():
+def test_chain_starts_with_default_then_the_v3_rotation_then_no_po_token_fallbacks():
+    # yt-dlp's own default goes first (it adapts to cookies / JavaScript runtime)...
     assert PLAYER_CLIENT_CHAIN[0] is None
-    named = {c[0] for c in PLAYER_CLIENT_CHAIN[1:]}
-    assert named == {"tv_downgraded", "web_embedded", "visionos"}
-    # These need a GVS PO token for downloadable formats in yt-dlp 2026.8.x, so they stay out.
-    assert not named & {"web", "web_safari", "android", "android_vr", "ios", "mweb"}
+    # ...then the client rotation used by the V2/V3 releases. Adaptive format
+    # availability varies with YouTube's current PO-token/auth policy.
+    assert PLAYER_CLIENT_CHAIN[1:3] == [["web"], ["android"]]
+    # The clients whose formats do not need a PO token stay as trailing fallbacks
+    # (age-gated / embedded videos); they must never replace web/android.
+    named = [c[0] for c in PLAYER_CLIENT_CHAIN[3:]]
+    assert named == ["tv_downgraded", "web_embedded", "visionos"]
+    assert not {"web_safari", "android_vr", "ios", "mweb"} & set(named)
 
 
 def test_download_tries_the_client_that_worked_for_metadata_first():
-    assert downloader._clients_starting_with(["tv_downgraded"]) == [
-        ["tv_downgraded"], None, ["web_embedded"], ["visionos"]]
+    assert downloader._clients_starting_with(["android"]) == [
+        ["android"], None, ["web"], ["tv_downgraded"], ["web_embedded"], ["visionos"]]
     assert downloader._clients_starting_with(None) == PLAYER_CLIENT_CHAIN
 
 
@@ -92,15 +97,15 @@ def test_blocked_detection(msg, blocked):
 
 def test_metadata_falls_back_to_the_next_client_and_remembers_it(tmp_path, monkeypatch):
     def behaviour(mode, client, opts):
-        if client in (None, ["tv_downgraded"]):
+        if client in (None, ["web"]):
             raise RuntimeError(SIGN_IN)
         return {"id": "abc123", "title": "Talk", "duration": 90}
 
     calls = _fake_yt_dlp(monkeypatch, behaviour)
     src = resolve_source(URL, tmp_path, {"cookies": {}})
 
-    assert [c for kind, c, _ in calls if kind == "info"] == [None, ["tv_downgraded"], ["web_embedded"]]
-    assert src.client == ["web_embedded"]
+    assert [c for kind, c, _ in calls if kind == "info"] == [None, ["web"], ["android"]]
+    assert src.client == ["android"]
     assert (src.video_id, src.title) == ("abc123", "Talk")
 
 
@@ -131,6 +136,31 @@ def test_other_failures_keep_their_own_message(tmp_path, monkeypatch):
     assert not isinstance(exc.value, YouTubeBlockedError)
 
 
+def test_download_still_pulls_via_web_android_when_other_clients_have_no_formats(tmp_path, monkeypatch):
+    """Regression test for the v4.0.0 breakage: a chain without the V3 web/android rotation
+    could not pull YouTube videos. The default client and the no-PO-token fallback clients
+    return no downloadable formats; the web/android rotation must still fetch the video."""
+    def behaviour(mode, client, opts):
+        if mode == "info":
+            return {"id": "abc123", "title": "Talk", "duration": 90}
+        if client in (None, ["tv_downgraded"], ["web_embedded"], ["visionos"]):
+            raise RuntimeError("ERROR: [youtube] abc123: Requested format is not available.")
+        # web/android answer: write the file the real yt-dlp would have written
+        from pathlib import Path
+
+        Path(str(opts["outtmpl"]).replace("%(ext)s", "mp4")).write_bytes(b"video")
+
+    calls = _fake_yt_dlp(monkeypatch, behaviour)
+    src = resolve_source(URL, tmp_path, {"cookies": {}})
+    src = fetch_source(src, URL, {"cookies": {}})
+
+    assert src.path is not None and src.path.name == "source.mp4"
+    assert src.audio_only is False
+    downloads = [c for kind, c, _ in calls if kind == "download"]
+    assert ["web"] in downloads          # the V3 rotation rescued the download
+    assert ["android"] not in downloads  # web answered first, android was never needed
+
+
 def test_refused_client_skips_its_other_formats_then_the_next_client(tmp_path, monkeypatch):
     def behaviour(mode, client, opts):
         if mode == "download" and client is None:
@@ -139,7 +169,30 @@ def test_refused_client_skips_its_other_formats_then_the_next_client(tmp_path, m
     calls = _fake_yt_dlp(monkeypatch, behaviour)
     assert download_with_fallback(URL, str(tmp_path / "source.%(ext)s"), {"cookies": {}}) is True
     downloads = [(c, f) for kind, c, f in calls if kind == "download"]
-    assert downloads == [(None, downloader.FORMAT_LADDER[0]), (["tv_downgraded"], downloader.FORMAT_LADDER[0])]
+    # the refused default client skips its second format, the next one is the V3 rotation's web
+    assert downloads == [(None, downloader.FORMAT_LADDER[0]), (["web"], downloader.FORMAT_LADDER[0])]
+
+
+def test_preview_falls_back_to_the_v3_web_android_rotation(tmp_path, monkeypatch):
+    def behaviour(mode, client, opts):
+        if mode == "info":
+            return {"id": "abc123", "title": "Talk", "duration": 90}
+        if client is None:
+            raise RuntimeError("ERROR: [youtube] abc123: Requested format is not available.")
+        if client == ["web"]:
+            from pathlib import Path
+
+            Path(str(opts["outtmpl"]).replace("%(ext)s", "mp4")).write_bytes(b"preview")
+            return
+        raise RuntimeError("unexpected client")
+
+    calls = _fake_yt_dlp(monkeypatch, behaviour)
+    probe.fetch_preview("pid-preview", URL, tmp_path, {"cookies": {}})
+
+    downloads = [c for kind, c, _ in calls if kind == "download"]
+    # The default client gets all three preview formats; then `web` succeeds on the first.
+    assert downloads == [None, None, None, ["web"]]
+    assert (tmp_path / "preview.mp4").read_bytes() == b"preview"
 
 
 def test_preview_and_probe_use_the_same_chain_and_report_the_refusal(tmp_path, monkeypatch):

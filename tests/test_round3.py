@@ -15,7 +15,11 @@ def test_ydl_opts_cookies_retries_resume():
     assert o["retry_sleep_functions"]["http"](10) == 30
     o2 = ydl_opts({})
     assert "cookiesfrombrowser" not in o2 and "cookiefile" not in o2
-    assert FORMAT_LADDER[0].startswith("bv*") and None in PLAYER_CLIENTS and ["tv_downgraded"] in PLAYER_CLIENTS
+    # V3 contract: the chain must contain the proven web/android rotation (plus yt-dlp's
+    # default and the no-PO-token fallbacks) -- a chain without web/android broke pulling.
+    assert FORMAT_LADDER[0].startswith("bv*")
+    assert None in PLAYER_CLIENTS and ["web"] in PLAYER_CLIENTS and ["android"] in PLAYER_CLIENTS
+    assert PLAYER_CLIENTS.index(["web"]) < PLAYER_CLIENTS.index(["tv_downgraded"])
 
 
 def test_error_clears_live_state(tmp_path):

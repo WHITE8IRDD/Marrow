@@ -90,8 +90,10 @@ clips perform best well under the cap, so the default `clip.max_duration` is 60 
      Settings → System check shows what is missing.
   2. Open Settings → YouTube cookies. Sign in to YouTube in Firefox (or in Chrome or Edge with that
      browser closed), then pick that browser, or choose a cookies.txt file exported while signed in.
-  Marrow already tries yt-dlp's default client, then the other clients that do not need a PO token,
-  so no other setting is needed. If it still fails, try again later or from another network.
+  Marrow tries yt-dlp's default client, the `web`/`android` client rotation used in V2/V3, and
+  clients that do not need a PO token. YouTube's format availability depends on its current
+  auth/token checks, so the format ladder keeps trying fallbacks. If it still fails, try again
+  later or from another network.
 - **Other yt-dlp download errors**: run `pip install -U "yt-dlp[default,deno]"`. YouTube changes
   often, so keep yt-dlp current.
 - **Captions use the wrong font**: install the font on your system and set `captions.font`

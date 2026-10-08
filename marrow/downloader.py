@@ -14,12 +14,24 @@ FORMAT_LADDER = [
 ]
 AUDIO_FALLBACK = "bestaudio/best"
 
-# Player clients tried in this order whenever YouTube refuses a request. None is yt-dlp's own
-# default, which already chooses clients by what is available (cookies, JavaScript runtime).
-# The named clients are the ones whose downloadable formats do not need a GVS PO token in
-# yt-dlp 2026.8.x. web, web_safari, android, android_vr, ios and mweb all need one, so they are
-# left out: without a token they return only HLS or no formats at all.
-PLAYER_CLIENT_CHAIN = [None, ["tv_downgraded"], ["web_embedded"], ["visionos"]]
+# Player clients tried in this order whenever YouTube refuses a request.
+#
+# None is yt-dlp's own default and goes first: it already picks clients by what is
+# available (cookies, JavaScript runtime), and with cookies it uses the signed-in
+# defaults, which pull full-quality formats.
+#
+# web and android come next. This restores the V2/V3 client rotation (the V3 release
+# specifically added 403 recovery, cookies, client rotation and a format ladder). Which
+# formats they return depends on YouTube's current PO-token/auth policy; some videos
+# still expose the pre-merged itag 18 when adaptive formats are unavailable. Keep
+# trying the rest of the chain and format ladder rather than treating either client
+# as a guaranteed success.
+#
+# The trailing clients are fallbacks whose formats do not need a GVS PO token in
+# yt-dlp 2026.8.x (web, web_safari, android, android_vr, ios and mweb need one for
+# adaptive formats). They help when the legacy clients return no formats; keeping
+# both sets lets the fallback logic cover old and current YouTube behavior.
+PLAYER_CLIENT_CHAIN = [None, ["web"], ["android"], ["tv_downgraded"], ["web_embedded"], ["visionos"]]
 PLAYER_CLIENTS = PLAYER_CLIENT_CHAIN  # old name, kept for callers
 
 # Deno is the recommended runtime (`pip install "yt-dlp[deno]"` installs it). Node and Bun are
