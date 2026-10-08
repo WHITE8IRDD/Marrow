@@ -228,12 +228,22 @@ input[type="range"] { width: 100%; accent-color: var(--on); margin: 6px 0; }
 .urlrow input[type="text"]:focus { border: 0; box-shadow: none; }
 .stepper { display: flex; align-items: center; gap: 8px; }
 .stepper input { width: 96px; text-align: center; font-weight: 700; }
+/* The – and + buttons beside the box are the only steppers: hide the native spin arrows. */
+.stepper input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.stepper input[type="number"]::-webkit-inner-spin-button,
+.stepper input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; appearance: none; margin: 0; display: none; }
 .num { width: 96px; }
 
-/* segmented controls */
-.seg { display: flex; gap: 4px; padding: 4px; width: 100%; border-radius: var(--r-pill); background: var(--panel-2); border: 1px solid var(--line); }
+/* segmented controls: one geometry for every pill group.
+   A button's corner radius is the track's radius minus the inset between them
+   (1px border + 4px padding), so the active pill is always concentric with the
+   track. One row is a stadium (999px clamps to half the height). Multi-row grids
+   get an explicit 22px track, so their corner pills no longer poke through the
+   rounded edge. */
+.seg { --seg-pad: 4px; --seg-r: 999px; display: flex; gap: 4px; padding: var(--seg-pad); width: 100%; border-radius: var(--seg-r); background: var(--panel-2); border: 1px solid var(--line); }
 .seg button {
-  flex: 1 1 0; min-width: 0; height: 34px; padding: 0 12px; border: 0; border-radius: var(--r-pill);
+  flex: 1 1 0; min-width: 0; height: 34px; padding: 0 12px; border: 0;
+  border-radius: calc(var(--seg-r) - var(--seg-pad) - 1px);
   background: none; color: var(--text-2); font-size: 13px; font-weight: 600; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; transition: background .2s var(--ease), color .2s;
 }
@@ -241,7 +251,7 @@ input[type="range"] { width: 100%; accent-color: var(--on); margin: 6px 0; }
 .seg button.on { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .3); }
 .seg.sm { width: auto; }
 .seg.sm button { flex: 0 0 auto; height: 28px; padding: 0 11px; font-size: 12px; }
-.seg.dense { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.seg.dense { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); --seg-r: 22px; }
 .seg.dense button { min-width: 0; padding: 0 4px; }
 .seg.inline { width: auto; display: inline-flex; }
 
@@ -284,7 +294,9 @@ input[type="range"] { width: 100%; accent-color: var(--on); margin: 6px 0; }
 .carousel { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .car-arrow { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); }
 .car-arrow:hover { background: var(--panel-3); }
-.carousel-track { flex: 1; min-width: 0; display: flex; gap: 10px; overflow-x: auto; overscroll-behavior-x: contain; padding: 4px 2px 10px; scroll-snap-type: x proximity; scrollbar-width: none; }
+/* the track clips its cards, so it keeps an 8px safe zone on each side for rings and lifts,
+   and snapping stops a card 8px in rather than flush against the clip edge */
+.carousel-track { flex: 1; min-width: 0; display: flex; gap: 10px; overflow-x: auto; overscroll-behavior-x: contain; padding: 6px 8px 10px; scroll-padding-inline: 8px; scroll-snap-type: x proximity; scrollbar-width: none; }
 .carousel-track::-webkit-scrollbar { display: none; }
 .preset-card {
   position: relative; flex: 0 0 116px; height: 124px; display: flex; flex-direction: column; gap: 6px;
@@ -294,7 +306,7 @@ input[type="range"] { width: 100%; accent-color: var(--on); margin: 6px 0; }
 }
 .preset-card:hover { background: var(--panel-3); transform: translateY(-2px); }
 .preset-card.sel, .preset-card.active { border-color: var(--accent); }
-.preset-card .card-preview { flex: 1; min-height: 0; display: grid; place-items: center; text-align: center; font-size: 12.5px; font-weight: 800; line-height: 1.12; text-transform: uppercase; overflow: hidden; overflow-wrap: anywhere; }
+.preset-card .card-preview { flex: 1; min-height: 0; display: grid; place-items: center; text-align: center; font-size: 12.5px; font-weight: 800; line-height: 1.12; text-transform: uppercase; padding: 4px 6px; overflow: hidden; overflow-wrap: anywhere; }
 .preset-card .card-preview.has-box { padding: 2px 6px; border-radius: 6px; }
 .card-label { font-size: 11.5px; font-weight: 600; color: var(--text-2); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .preset-card .tplx { position: absolute; top: 5px; right: 5px; width: 20px; height: 20px; display: none; place-items: center; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .16); color: #fff; font-size: 13px; line-height: 1; z-index: 2; }
@@ -711,7 +723,7 @@ input[type="range"] { width: 100%; accent-color: var(--on); margin: 6px 0; }
 .plan dd { margin: 0; font-weight: 650; text-align: right; min-width: 0; overflow-wrap: anywhere; }
 .home-side .cta { margin-top: 0; }
 
-.seg.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.seg.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); --seg-r: 22px; }
 .seg.grid2 button { flex: none; padding: 0 8px; }
 .seg.tight button { padding: 0 6px; font-size: 12.5px; }
 
