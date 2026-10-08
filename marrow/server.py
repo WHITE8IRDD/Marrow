@@ -191,7 +191,7 @@ def clean_global_settings(raw):
     ck = raw.get("cookies") if isinstance(raw.get("cookies"), dict) else {}
     lang = str(w.get("language") or "").strip().lower()
     host = str(l.get("host") or "").strip()
-    browsers = ("chrome", "firefox", "edge", "brave", "safari")
+    browsers = ("chromium", "chrome", "firefox", "edge", "brave", "safari")
     cfb = str(ck.get("from_browser") or "").strip().lower()
     cfile = str(ck.get("cookiefile") or "").strip()
     pace = c.get("min_gap", c.get("pace", 0.22))

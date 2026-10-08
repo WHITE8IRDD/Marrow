@@ -93,14 +93,18 @@ def _count_cookies(path):
 
 
 def cookie_status(cookies):
-    """Describe the YouTube cookie setting without reading any browser database."""
+    """Describe the YouTube cookie setting without reading any browser database.
+
+    Cookies are optional: most videos work with source "none". A browser or cookies.txt
+    file only helps when YouTube asks for a sign-in check or returns 403.
+    """
     ck = cookies if isinstance(cookies, dict) else {}
     browser = str(ck.get("from_browser") or "").strip().lower()
     cookie_file = str(ck.get("cookiefile") or "").strip()
     if browser:
         return {"source": "browser", "label": browser, "ok": True, "youtube_cookies": None,
                 "signed_in": None,
-                "message": f"read from {browser} each time Marrow downloads"}
+                "message": f"optional · read from {browser} each time Marrow downloads"}
     if cookie_file:
         path = Path(cookie_file).expanduser()
         if not path.is_file():
@@ -116,7 +120,7 @@ def cookie_status(cookies):
         return {"source": "file", "label": "file", "ok": count > 0 and signed_in,
                 "youtube_cookies": count, "signed_in": signed_in, "message": message}
     return {"source": "none", "label": "none", "ok": False, "youtube_cookies": 0,
-            "signed_in": False, "message": "not set"}
+            "signed_in": False, "message": "not set (optional — only needed if YouTube blocks downloads)"}
 
 
 def summary(cookies=None):

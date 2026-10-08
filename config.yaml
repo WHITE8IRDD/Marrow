@@ -21,10 +21,13 @@ diarization:
   enabled: false               # needs: pip install -e ".[diarization]" and HF_TOKEN
   hf_token: ""
 
-# YouTube downloads: cookies fix most 403 Forbidden errors on large videos.
+# YouTube downloads: cookies are optional. Most videos work without them; they only
+# help when YouTube asks for a sign-in check or returns 403 Forbidden. If the saved
+# browser is not installed, Marrow retries without browser cookies (a cookies.txt
+# file, if set, is still used).
 cookies:
-  from_browser: ""             # chrome, firefox, edge, brave, safari, or empty
-  cookiefile: ""               # optional path to a Netscape cookie file
+  from_browser: ""             # optional: chromium, chrome, firefox, edge, brave, safari, or empty for none
+  cookiefile: ""               # optional path to a Netscape cookie file (works with any browser)
 
 clip:
   min_duration: 20

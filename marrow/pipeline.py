@@ -329,8 +329,9 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
         _write_manifest(output_dir, src, source, moments)
         raise RuntimeError(
             "Only audio could be downloaded (YouTube blocked the video track). "
-            "The strongest moments are listed in manifest.json. Add YouTube cookies under "
-            "Settings → YouTube cookies (signed in to YouTube in that browser), then run again.")
+            "The strongest moments are listed in manifest.json. Optionally, add YouTube cookies under "
+            "Settings → YouTube cookies (signed in to YouTube in that browser, or a cookies.txt file), "
+            "then run again.")
 
     # 7. Captions + render
     out_dir = ensure_dir(Path(output_dir) / src.video_id)

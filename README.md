@@ -88,8 +88,10 @@ clips perform best well under the cap, so the default `clip.max_duration` is 60 
   1. Update the YouTube tools: `pip install -U "yt-dlp[default,deno]"`. The `deno` extra installs the
      JavaScript runtime and `default` installs the solver (`yt-dlp-ejs`). Node.js works too.
      Settings → System check shows what is missing.
-  2. Open Settings → YouTube cookies. Sign in to YouTube in Firefox (or in Chrome or Edge with that
-     browser closed), then pick that browser, or choose a cookies.txt file exported while signed in.
+  2. (Optional — most videos work without cookies.) Open Settings → YouTube cookies. Sign in to
+     YouTube in Firefox or Chromium (or in Chrome or Edge with that browser closed), then pick
+     that browser, or choose a cookies.txt file exported while signed in (works with any browser).
+     If the saved browser isn't installed, Marrow retries without browser cookies.
   Marrow tries yt-dlp's default client, the `web`/`android` client rotation used in V2/V3, and
   clients that do not need a PO token. YouTube's format availability depends on its current
   auth/token checks, so the format ladder keeps trying fallbacks. If it still fails, try again

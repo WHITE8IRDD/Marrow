@@ -41,6 +41,10 @@ JS_RUNTIMES = {"deno": {}, "node": {}, "bun": {}}
 
 _SIGN_IN_RE = re.compile(r"sign in to confirm|not a bot|login[ _]required|sign in to youtube", re.I)
 _BLOCKED_RE = re.compile(r"sign in to confirm|not a bot|login[ _]required|sign in to youtube|\b403\b|forbidden", re.I)
+# yt-dlp raises FileNotFoundError("could not find <browser> cookies database in ...") when the
+# saved browser is not installed (or has no profile), wrapped in CookieLoadError("failed to
+# load cookies"). Match the inner message through the exception chain.
+_MISSING_BROWSER_DB_RE = re.compile(r"could not find .*cookies database|cookies database not found", re.I)
 
 
 class YouTubeBlockedError(RuntimeError):
@@ -65,6 +69,61 @@ def is_blocked_error(err) -> bool:
     return bool(_BLOCKED_RE.search(str(err)))
 
 
+def is_missing_browser_db(err) -> bool:
+    """True when yt-dlp could not find the saved browser's cookie database.
+
+    This happens when the setting names a browser that is not installed (or has no
+    profile yet), e.g. Chrome is selected but only Chromium/Firefox exist. yt-dlp wraps
+    the FileNotFoundError in CookieLoadError, so the whole __cause__/__context__ chain
+    is searched. A locked database ("could not copy ...") is NOT a miss and returns False.
+    """
+    seen = set()
+    stack = [err]
+    while stack:
+        e = stack.pop()
+        if e is None or id(e) in seen:
+            continue
+        seen.add(id(e))
+        try:
+            if _MISSING_BROWSER_DB_RE.search(str(e)):
+                return True
+        except Exception:
+            pass
+        for nxt in (getattr(e, "__cause__", None), getattr(e, "__context__", None)):
+            if nxt is not None and id(nxt) not in seen:
+                stack.append(nxt)
+    return False
+
+
+def _has_browser_cookies(cfg) -> bool:
+    try:
+        ck = (cfg or {}).get("cookies") if isinstance(cfg, dict) else {}
+        return bool(isinstance(ck, dict) and ck.get("from_browser"))
+    except Exception:
+        return False
+
+
+def _browser_name(cfg) -> str:
+    try:
+        ck = (cfg or {}).get("cookies") if isinstance(cfg, dict) else {}
+        return str(ck.get("from_browser") or "") if isinstance(ck, dict) else ""
+    except Exception:
+        return ""
+
+
+def _without_browser_cookies(cfg):
+    """Copy of cfg with cookies-from-browser disabled. A cookies.txt file is kept."""
+    if not isinstance(cfg, dict):
+        return cfg
+    new = dict(cfg)
+    ck = cfg.get("cookies")
+    if isinstance(ck, dict):
+        new_ck = dict(ck)
+        new_ck["from_browser"] = ""
+        new["cookies"] = new_ck
+    return new
+
+
 _YOUTUBE_RE = re.compile(r"youtube\.com|youtu\.be", re.I)
 
 
@@ -85,13 +144,15 @@ def give_up(errors, action, cfg=None, fallback=None, url=None):
         head = "YouTube asked to confirm you're not a bot, and every player client was refused."
         steps = ("Fix it, then press Retry:\n"
                  "1. Update yt-dlp with its JavaScript and solver extras: pip install -U \"yt-dlp[default,deno]\"\n"
-                 "2. Settings → YouTube cookies: sign in to YouTube in Firefox (or in Chrome/Edge with that "
-                 "browser closed), then pick that browser, or choose a cookies.txt file exported while signed in.")
+                 "2. (Optional — most videos work without cookies.) Settings → YouTube cookies: sign in to YouTube "
+                 "in Firefox or Chromium (or in Chrome/Edge with that browser closed), then pick that browser, "
+                 "or choose a cookies.txt file exported while signed in (works with any browser).")
     else:
         head = "YouTube refused every player client with 403 Forbidden."
         steps = ("Fix it, then press Retry:\n"
                  "1. Update yt-dlp: pip install -U \"yt-dlp[default,deno]\"\n"
-                 "2. Settings → YouTube cookies: pick a browser you are signed in to, or a cookies.txt file.\n"
+                 "2. Settings → YouTube cookies (optional): pick a browser you are signed in to "
+                 "(Firefox or Chromium work well), or a cookies.txt file.\n"
                  "3. If it still fails, try again later or from another network.")
     return YouTubeBlockedError(f"{head}\n{steps}\nChecked: {checked}.\nLast error: {last}")
 
@@ -141,18 +202,39 @@ def _clients_starting_with(first):
 
 
 def _probe_metadata(url, cfg, clients):
-    """Metadata from the first player client that answers. Returns (info, client)."""
+    """Metadata from the first player client that answers. Returns (info, client).
+
+    If the saved browser is not installed, the same client is retried once without
+    cookies-from-browser, and the rest of the chain stays on the no-browser path so the
+    missing database is not scanned again. A cookies.txt file is always kept.
+    """
     import yt_dlp
 
     errors = []
+    eff = cfg
     for client in clients:
         try:
-            with yt_dlp.YoutubeDL(ydl_opts(cfg, {"skip_download": True, **_client_args(client)})) as ydl:
+            with yt_dlp.YoutubeDL(ydl_opts(eff, {"skip_download": True, **_client_args(client)})) as ydl:
                 info = ydl.extract_info(url, download=False)
             if info:
                 return info, client
             errors.append(RuntimeError("YouTube returned no video information"))
-        except Exception as e:  # next player client
+        except Exception as e:
+            if is_missing_browser_db(e) and _has_browser_cookies(eff):
+                browser = _browser_name(eff) or "saved browser"
+                log.warning("Browser cookies unavailable (%s is not installed or has no profile); "
+                            "retrying without browser cookies: %s", browser, e)
+                eff = _without_browser_cookies(eff)
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts(eff, {"skip_download": True, **_client_args(client)})) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                    if info:
+                        return info, client
+                    errors.append(RuntimeError("YouTube returned no video information"))
+                except Exception as e2:  # next player client, still without browser cookies
+                    errors.append(e2)
+                    log.warning("Metadata failed (client=%s): %s", _client_label(client), e2)
+                continue
             errors.append(e)
             log.warning("Metadata failed (client=%s): %s", _client_label(client), e)
     raise give_up(errors, "Reading the video", cfg, url=url)
@@ -165,27 +247,59 @@ def extract_info(url, cfg=None):
 
 def download_with_fallback(url, outtmpl, cfg=None, duration=None, formats=None, clients=None):
     """Download trying player clients x format ladder. Returns True if a video track was
-    fetched, False if only audio succeeded. Raises when every client is refused."""
+    fetched, False if only audio succeeded. Raises when every client is refused.
+
+    If the saved browser is not installed, the same client+format is retried once without
+    cookies-from-browser, and the rest of the operation (including the audio fallback)
+    stays on the no-browser path so the missing database is not scanned again. A
+    cookies.txt file is always kept.
+    """
     import yt_dlp
 
     fmts = list(formats or FORMAT_LADDER)
     clients = list(clients or PLAYER_CLIENT_CHAIN)
     errors = []
+    eff = cfg
+
+    def _disable_browser_cookies(err):
+        nonlocal eff
+        if is_missing_browser_db(err) and _has_browser_cookies(eff):
+            browser = _browser_name(eff) or "saved browser"
+            log.warning("Browser cookies unavailable (%s is not installed or has no profile); "
+                        "retrying without browser cookies: %s", browser, err)
+            eff = _without_browser_cookies(eff)
+            return True
+        return False
+
+    def _video_opts(browser_cfg, client, fmt):
+        opts = ydl_opts(browser_cfg, {
+            "format": fmt,
+            "merge_output_format": "mp4",
+            "outtmpl": outtmpl,
+            **_client_args(client),
+        })
+        if duration and duration > 45 * 60:
+            opts["http_chunk_size"] = 10 * 1024 * 1024
+        return opts
+
     for client in clients:
         for fmt in fmts:
-            opts = ydl_opts(cfg, {
-                "format": fmt,
-                "merge_output_format": "mp4",
-                "outtmpl": outtmpl,
-                **_client_args(client),
-            })
-            if duration and duration > 45 * 60:
-                opts["http_chunk_size"] = 10 * 1024 * 1024
             try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
+                with yt_dlp.YoutubeDL(_video_opts(eff, client, fmt)) as ydl:
                     ydl.download([url])
                 return True
             except Exception as e:
+                if _disable_browser_cookies(e):
+                    try:
+                        with yt_dlp.YoutubeDL(_video_opts(eff, client, fmt)) as ydl:
+                            ydl.download([url])
+                        return True
+                    except Exception as e2:
+                        errors.append(e2)
+                        log.warning("Download failed (client=%s, format=%s): %s", _client_label(client), fmt, e2)
+                        if is_blocked_error(e2):
+                            break  # this client is refused; another format from it won't help
+                        continue
                 errors.append(e)
                 log.warning("Download failed (client=%s, format=%s): %s", _client_label(client), fmt, e)
                 if is_blocked_error(e):
@@ -193,11 +307,22 @@ def download_with_fallback(url, outtmpl, cfg=None, duration=None, formats=None, 
     # Last resort: audio only, so transcription can still run.
     for client in clients:
         try:
-            opts = ydl_opts(cfg, {"format": AUDIO_FALLBACK, "outtmpl": outtmpl, **_client_args(client)})
+            opts = ydl_opts(eff, {"format": AUDIO_FALLBACK, "outtmpl": outtmpl, **_client_args(client)})
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
             return False
         except Exception as e:
+            if _disable_browser_cookies(e):
+                try:
+                    opts = ydl_opts(eff, {"format": AUDIO_FALLBACK, "outtmpl": outtmpl,
+                                          **_client_args(client)})
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        ydl.download([url])
+                    return False
+                except Exception as e2:
+                    errors.append(e2)
+                    log.warning("Audio download failed (client=%s): %s", _client_label(client), e2)
+                continue
             errors.append(e)
             log.warning("Audio download failed (client=%s): %s", _client_label(client), e)
     raise give_up(errors, "Downloading the video", cfg, url=url)
