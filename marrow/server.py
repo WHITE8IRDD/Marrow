@@ -23,7 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import __version__, hw, studio
+from . import __version__, hw, probe, studio
 from .config import deep_merge, load_config
 from .downloader import VIDEO_SUFFIXES, _find_source
 from .utils import log, probe_duration, slugify
@@ -79,7 +79,7 @@ _OV_INT_RANGES = {"font_size": (30, 140), "size": (30, 140), "outline": (0, 20),
                   "max_words_per_line": (1, 10)}
 _OV_COLORS = {"highlight_color", "text_color", "outline_color", "pill_color", "pill_text", "box_color"}
 _OV_CHOICE = {"position": ("lower", "center", "top"), "anim": ("pop", "none"),
-              "highlight_mode": ("color", "pill")}
+              "highlight_mode": ("color", "pill"), "display": ("line", "word")}
 _OV_BOOL = {"uppercase", "bold", "italic", "box"}
 
 
@@ -90,6 +90,11 @@ def clean_overrides(ov):
         if k in _OV_COLORS:
             if isinstance(v, str) and HEX.match(v):
                 out[k] = v
+        elif k == "word_colors":
+            if isinstance(v, list):
+                cols = [c for c in v if isinstance(c, str) and HEX.match(c)][:6]
+                if cols:
+                    out[k] = cols
         elif k in _OV_INT_RANGES:
             lo, hi = _OV_INT_RANGES[k]
             vv = _ov_int(v, lo, hi)
@@ -173,14 +178,25 @@ class App:
         self.out = self.home / "output"
         self.work = self.home / "work"
         self.uploads = self.home / "uploads"
-        for d in (self.home, self.out, self.work, self.uploads):
+        self.probes = self.home / "probes"
+        for d in (self.home, self.out, self.work, self.uploads, self.probes):
             d.mkdir(parents=True, exist_ok=True)
+        probe.sweep()
         self.lock = threading.RLock()
         self.cancel = set()
         self.queue = queue.Queue()
         self.projects = {}
         self.saved_settings = {}
         self.model_dl = {"running": False, "done": [], "error": None}
+        self._ff = {"ffmpeg": bool(shutil.which("ffmpeg") and shutil.which("ffprobe")), "libass": False}
+        try:
+            fr = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True,
+                                text=True, timeout=20, encoding="utf-8", errors="replace")
+            self._ff["libass"] = " ass " in fr.stdout
+        except Exception:
+            pass
+        self._sys = None
+        self._sys_at = 0
         self._load()
         threading.Thread(target=self._worker, daemon=True, name="marrow-worker").start()
 
@@ -205,6 +221,15 @@ class App:
                 self.saved_settings = json.loads(spath.read_text(encoding="utf-8"))
             except Exception:
                 self.saved_settings = {}
+        if isinstance(self.saved_settings, dict) and self.saved_settings.get("settings_version", 0) < 1:
+            w = self.saved_settings.get("whisper")
+            if isinstance(w, dict) and w.get("model") == "small":
+                w["model"] = "auto"  # v0.3 default persisted; auto picks the fast model per language
+            self.saved_settings["settings_version"] = 1
+            try:
+                spath.write_text(json.dumps(self.saved_settings, indent=2), encoding="utf-8")
+            except OSError:
+                pass
 
     def _save(self):
         path = self.home / "projects.json"
@@ -242,13 +267,14 @@ class App:
                 "score": c["score"], "title": c.get("title", ""), "reason": c.get("reason", ""),
                 "hashtags": c.get("hashtags", []), "status": c.get("status", "ready"),
                 "last_error": c.get("last_error"), "platforms": list(files),
+                "render_pct": c.get("render_pct", 0.0), "render_eta": c.get("render_eta"),
                 "urls": {pl: f"/media/{vid}/{fn}?v={rev}" for pl, fn in files.items()},
                 "thumb": f"/media/{vid}/{c['thumb']}?v={rev}" if c.get("thumb") else None,
             })
         clips.sort(key=lambda c: c["rank"])
         thumb = next((c["thumb"] for c in clips if c["thumb"]), None)
         keys = ("id", "name", "source", "source_kind", "status", "stage", "progress", "created",
-                "started", "finished", "error", "video_id", "settings", "engine")
+                "started", "finished", "error", "video_id", "settings", "engine", "eta_sec", "eta_at")
         out = {k: p.get(k) for k in keys}
         out.update(clips=clips, thumb=thumb,
                    scan=p.get("scan"), candidates=p.get("candidates", []),
@@ -278,8 +304,15 @@ class App:
     def create_project(self, body):
         text = str(body.get("url") or "").strip()
         upload = body.get("upload")
+        probe_id = body.get("probe_id")
         settings = clean_job_settings(body.get("settings"))
-        if upload:
+        if probe_id:
+            pr = probe.get(str(probe_id))
+            if not pr or pr["state"] != "ready" or not pr.get("info"):
+                raise ApiError("Video preview is not ready yet. Wait for it to finish loading.")
+            info = pr["info"]
+            source, kind, name = info["url"], "url", info.get("title") or "video"
+        elif upload:
             path = self.uploads / Path(str(upload)).name
             if not path.exists():
                 raise ApiError("Uploaded file not found. Upload it again.")
@@ -296,7 +329,8 @@ class App:
         pid = uuid.uuid4().hex[:10]
         p = {"id": pid, "name": name, "source": source, "source_kind": kind, "status": "queued",
              "stage": "Waiting in queue", "progress": 0.0, "created": time.time(), "started": None,
-             "finished": None, "error": None, "video_id": None, "settings": settings, "clips": []}
+             "finished": None, "error": None, "video_id": None, "settings": settings, "clips": [],
+             "probe_id": str(probe_id) if probe_id else None}
         with self.lock:
             self.projects[pid] = p
             self._save()
@@ -493,7 +527,7 @@ class App:
 
         def have_source(src, duration):
             threading.Thread(target=self._build_proxy,
-                             args=(str(src.path), str(src.workdir), duration),
+                             args=(pid, str(src.path), str(src.workdir), duration),
                              daemon=True, name="marrow-proxy").start()
 
         def progress(stage, frac, *, log=None, scan=None, candidates=None, clips=None):
@@ -512,17 +546,24 @@ class App:
                     p["candidates"] = candidates
                 if clips is not None:
                     p["clips"] = clips
+                e = eta_holder.get("eta")
+                if e is not None:
+                    p["eta_sec"] = round(e.remaining(), 1)
+                    p["eta_at"] = time.time()
 
         try:
             from .pipeline import run_pipeline  # heavy imports happen here, not at server start
 
             cfg = self.config_for(settings)
+            eta_holder = {}
             results = run_pipeline(
                 source, output_dir=str(self.out), config=cfg, clip_count=settings["clips"],
                 clip_duration=settings["duration"], platform=settings["platform"],
                 layout=settings["layout"], use_llm=settings["use_llm"], progress=progress,
-                on_source=have_source,
+                on_source=have_source, eta_holder=eta_holder,
             )
+            if "eta" in eta_holder:
+                eta_holder["eta"].finish()
             if not results:
                 raise RuntimeError("No clips were produced.")
             first_file = Path(next(iter(results[0]["files"].values())))
@@ -615,9 +656,29 @@ class App:
 
     # ---- misc
     MODELS_PRELOAD = ("tiny", "distil-large-v3", "large-v3-turbo")
-
-    def _build_proxy(self, src_path, workdir, duration):
+    def _build_proxy(self, pid, src_path, workdir, duration):
         try:
+            wd = Path(workdir)
+            if (wd / "proxy.mp4").exists() and (wd / "strip.jpg").exists():
+                return  # already have both (e.g. regenerate, or copied from a probe)
+            with self.lock:
+                p = self.projects.get(pid)
+            if p and p.get("probe_id"):
+                pr = probe.get(p["probe_id"])
+                if pr:
+                    import shutil
+
+                    d = Path(pr["dir"])
+                    prev = d / "preview.mp4"
+                    if not prev.exists():
+                        c = sorted(d.glob("preview.*"))
+                        prev = c[0] if c else None
+                    if prev:
+                        shutil.copy(prev, wd / "proxy.mp4")
+                        st = d / "strip.jpg"
+                        if st.exists():
+                            shutil.copy(st, wd / "strip.jpg")
+                        return
             studio.make_proxy(src_path, workdir, duration)
         except Exception:
             log.exception("Proxy build failed")
@@ -659,10 +720,15 @@ class App:
             with self.lock:
                 self.model_dl["running"] = False
 
-    def system(self):
+    def system(self, fresh=False):
+        now = time.time()
+        with self.lock:
+            if self._sys and not fresh and now - self._sys_at < 10:
+                return dict(self._sys)
         cfg = self.config_for()
         info = {
-            "ffmpeg": bool(shutil.which("ffmpeg") and shutil.which("ffprobe")),
+            "ffmpeg": self._ff["ffmpeg"],
+            "libass": self._ff["libass"],
             "ollama": {"enabled": cfg["llm"]["enabled"], "host": cfg["llm"]["host"], "model": cfg["llm"]["model"],
                        "reachable": False, "model_ready": False, "models": []},
             "gpu": False,
@@ -683,30 +749,24 @@ class App:
         except Exception:
             info["encoder"] = cfg["render"].get("encoder", "auto")
         try:
-            import subprocess
-
-            fr = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True,
-                                text=True, timeout=15, encoding="utf-8", errors="replace")
-            info["libass"] = " ass " in fr.stdout
-        except Exception:
-            info["libass"] = False
-        try:
             import requests
 
-            r = requests.get(cfg["llm"]["host"].rstrip("/") + "/api/tags", timeout=2)
+            r = requests.get(cfg["llm"]["host"].rstrip("/") + "/api/tags", timeout=0.4)
             r.raise_for_status()
             names = [m.get("name", "") for m in r.json().get("models", [])]
             want = cfg["llm"]["model"]
             info["ollama"].update(reachable=True, models=names, model_ready=want in names or f"{want}:latest" in names)
         except Exception:
             pass
-        return info
+        with self.lock:
+            self._sys, self._sys_at = info, time.time()
+            return dict(info)
 
     def settings(self):
         cfg = self.config_for()
         return {
             "version": __version__, "home": str(self.home),
-            "settings": {"whisper": {k: cfg["whisper"].get(k) for k in ("model", "device", "language")},
+            "settings": {"whisper": {k: cfg["whisper"].get(k) for k in ("model", "device", "language", "quality")},
                          "llm": {k: cfg["llm"][k] for k in ("enabled", "model", "host")},
                          "render": {k: cfg["render"][k] for k in ("encoder", "loudnorm")},
                          "captions": {"font": cfg["captions"]["font"]}},
@@ -998,6 +1058,19 @@ def r_clip_delete(h, q, pid, rank):
     h.send_json(h.app.delete_clip(pid, int(rank)))
 
 
+@route("GET", r"/api/projects/([0-9a-f]+)/clips/(\d+)/pre.jpg")
+def r_clip_pre(h, q, pid, rank):
+    with h.app.lock:
+        p = h.app.get(pid)
+        vid = p.get("video_id")
+    if not vid:
+        raise ApiError("Not ready yet", 404)
+    path = (h.app.work / vid / f"pre_{int(rank):02d}.jpg").resolve()
+    if h.app.work.resolve() not in path.parents or not path.is_file():
+        raise ApiError("Not ready yet", 404)
+    h.send_file(path)
+
+
 @route("POST", r"/api/projects/([0-9a-f]+)/clips/(\d+)/rerender")
 def r_rerender(h, q, pid, rank):
     h.send_json(h.app.queue_rerender(pid, int(rank), h.read_json()))
@@ -1025,7 +1098,7 @@ def r_open(h, q):
 
 @route("GET", r"/api/system")
 def r_system(h, q):
-    h.send_json(h.app.system())
+    h.send_json(h.app.system((q.get("fresh") or ["0"])[0] == "1"))
 
 
 @route("GET", r"/api/hardware")
@@ -1077,6 +1150,55 @@ def r_fonts(h, q, fname):
     path = (FONTS_DIR / fname).resolve()
     if FONTS_DIR.resolve() not in path.parents or not path.is_file():
         raise ApiError("File not found", 404)
+    h.send_file(path)
+
+
+@route("POST", r"/api/probe")
+def r_probe_start(h, q):
+    url = str(h.read_json().get("url") or "").strip()
+    if not re.match(r"^https?://", url, re.I):
+        raise ApiError("Paste a valid http(s) video link.")
+    h.send_json({"id": probe.start(url, h.app.probes)}, 202)
+
+
+@route("GET", r"/api/probe/([0-9a-f]+)")
+def r_probe_get(h, q, pid):
+    pr = probe.get(pid)
+    if not pr:
+        raise ApiError("Probe not found", 404)
+    info = pr.get("info") or {}
+    thumb_local = (Path(pr["dir"]) / "thumb.jpg").exists()
+    h.send_json({
+        "state": pr["state"], "progress": pr.get("progress", 0), "error": pr.get("error"),
+        "info": {k: info.get(k) for k in ("title", "channel", "duration", "live", "url", "video_id")} if info else None,
+        "thumb": f"/api/probe/{pid}/thumb" if thumb_local else (info.get("thumbnail") if info else None),
+        "preview": f"/api/probe/{pid}/preview" if pr["state"] == "ready" else None,
+    })
+
+
+@route("GET", r"/api/probe/([0-9a-f]+)/thumb")
+def r_probe_thumb(h, q, pid):
+    pr = probe.get(pid)
+    if not pr:
+        raise ApiError("Probe not found", 404)
+    path = (Path(pr["dir"]) / "thumb.jpg").resolve()
+    if h.app.probes.resolve() not in path.parents or not path.is_file():
+        raise ApiError("Not ready yet", 404)
+    h.send_file(path)
+
+
+@route("GET", r"/api/probe/([0-9a-f]+)/preview")
+def r_probe_preview(h, q, pid):
+    pr = probe.get(pid)
+    if not pr:
+        raise ApiError("Probe not found", 404)
+    d = Path(pr["dir"])
+    cands = sorted(d.glob("preview.*"))
+    if pr["state"] != "ready" or not cands:
+        raise ApiError("Not ready yet", 404)
+    path = cands[0].resolve()
+    if h.app.probes.resolve() not in path.parents:
+        raise ApiError("Not found", 404)
     h.send_file(path)
 
 

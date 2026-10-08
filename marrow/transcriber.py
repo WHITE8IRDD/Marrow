@@ -76,8 +76,9 @@ def pick_model(setting, language, quality="fast", device="cuda"):
 def _run(name, dev, ct, audio_path, language, beam, bs, on_progress):
     from faster_whisper import BatchedInferencePipeline, WhisperModel
 
-    model = WhisperModel(name, device=dev, compute_type=ct)
+    model = WhisperModel(name, device=dev, compute_type=ct, cpu_threads=6)
     pipe = BatchedInferencePipeline(model=model)
+    t_first = None
     t0 = time.time()
     segments, info = pipe.transcribe(
         str(audio_path),
@@ -91,13 +92,15 @@ def _run(name, dev, ct, audio_path, language, beam, bs, on_progress):
     total = max(info.duration, 1.0)
     words = []
     for seg in segments:                       # lazy generator: consume before freeing the model
+        if t_first is None:
+            t_first = time.time()               # speed counts from the first segment, not model load
         for w in seg.words or []:
             text = w.word.strip()
             if text:
                 words.append(Word(start=float(w.start), end=float(w.end), text=text))
         if on_progress:
             frac = min(1.0, seg.end / total)
-            speed = seg.end / max(time.time() - t0, 0.01)
+            speed = seg.end / max(time.time() - t_first, 0.01)
             line = f"[{seg.start:7.2f}s -> {seg.end:7.2f}s] {seg.text.strip()}"
             on_progress(frac, speed, seg.end, line)
     del pipe, model

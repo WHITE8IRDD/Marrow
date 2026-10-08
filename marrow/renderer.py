@@ -2,7 +2,7 @@ from pathlib import Path
 
 from . import hw
 from .caption_styles import ensure_fonts
-from .utils import run_ffmpeg
+from .utils import run_ffmpeg, run_ffmpeg_progress
 
 _nvenc_ok = None
 
@@ -53,7 +53,8 @@ def build_filter_graph(layout, rx, ry, fps, zoom, ass_name=None):
     return base + ";" + tail
 
 
-def render_clip(video_path, start, end, ass_path, output_path, config, platform="shorts"):
+def render_clip(video_path, start, end, ass_path, output_path, config, platform="shorts",
+                on_progress=None):
     plat = config["platforms"][platform]
     rx, ry = plat["res_x"], plat["res_y"]
     r = config["render"]
@@ -88,5 +89,9 @@ def render_clip(video_path, start, end, ass_path, output_path, config, platform=
 
     # Run inside the subtitle folder so `ass=clip.ass` is a bare filename. This avoids
     # Windows drive-letter colons (C:\...) which break FFmpeg filter syntax.
-    run_ffmpeg(args, cwd=str(ass.parent) if ass else None)
+    cwd = str(ass.parent) if ass else None
+    if on_progress is None:
+        run_ffmpeg(args, cwd=cwd)
+    else:
+        run_ffmpeg_progress(args, max(0.1, end - start), on_progress, cwd=cwd)
     return str(output_path)

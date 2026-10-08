@@ -1,4 +1,5 @@
 import re
+from dataclasses import replace
 
 import numpy as np
 
@@ -8,6 +9,7 @@ from .utils import format_ass_time
 PUNCT_BREAK = (",", ".", "?", "!", ";", ":", "…", "،", "؛", "؟")
 
 _AR = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]")
+_NORM = lambda t: re.sub(r"[\W_]+", "", t.lower())
 
 
 def hex_to_bgr(color: str) -> str:
@@ -49,10 +51,38 @@ def _off(st):
             f"\\bord{st['outline']}\\shad{st['shadow']}\\fscx100\\fscy100")
 
 
+def clean_words(words):
+    """Merge/drop duplicate or overlapping words (batched transcription can repeat
+    words at chunk boundaries). Returns a new sorted list."""
+    out = []
+    for w in sorted(words, key=lambda x: (x.start, x.end)):
+        if out:
+            p = out[-1]
+            if _NORM(w.text) == _NORM(p.text) and w.start < p.end + 0.05:      # same word twice -> merge
+                out[-1] = replace(p, end=max(p.end, w.end))
+                continue
+            if w.start < p.end:                                                # overlap -> trim previous
+                out[-1] = replace(p, end=max(p.start + 0.02, w.start))
+        out.append(w)
+    return out
+
+
+def _finalize(raw):
+    """Safety net: sort by start, drop fully-duplicate overlaps, clamp the rest."""
+    raw = sorted(raw, key=lambda e: (e[0], e[1]))
+    out = []
+    for s, e, body in raw:
+        if out and s < out[-1][1] - 1e-9:
+            ps, pe, pb = out[-1]
+            if body == pb and e <= pe + 1e-9:
+                continue
+            out[-1] = (ps, max(ps + 0.02, min(pe, s)), pb)
+        out.append((s, e, body))
+    return [(s, e, b) for s, e, b in out if e > s + 1e-9]
+
+
 def shift_words(words, clip_start, clip_end):
     """Return COPIES of the words inside the clip, with times relative to clip start."""
-    from dataclasses import replace
-
     dur = clip_end - clip_start
     out = []
     for w in words:
@@ -83,7 +113,7 @@ def group_words(words, max_words=4, max_chars=22, gap=0.6):
 def generate_ass(words, clip_start, clip_end, output_path, style, res_x=1080, res_y=1920,
                  margin_v=420, preset=None) -> int:
     st = resolve_style(preset or style.get("preset"), style.get("overrides"), style)
-    clip_words = shift_words(words, clip_start, clip_end)
+    clip_words = clean_words(shift_words(words, clip_start, clip_end))
     rtl = is_rtl(clip_words)
     lines = group_words(clip_words, st["max_words_per_line"], st["max_chars_per_line"])
 
@@ -116,23 +146,38 @@ def generate_ass(words, clip_start, clip_end, output_path, style, res_x=1080, re
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     blur = f"{{\\blur{st['blur']}}}" if st["blur"] else ""
+    raw = []
 
-    events = []
-    for li, line in enumerate(lines):
-        limit = lines[li + 1][0].start if li + 1 < len(lines) else float("inf")
-        for k, w in enumerate(line):
-            end = min(line[k + 1].start, w.end + 0.35) if k + 1 < len(line) else w.end + 0.1
-            end = max(min(end, limit), w.start + 0.05)
-            parts = []
-            for i, ww in enumerate(line):
-                txt = ass_escape(ww.text.upper() if uppercase else ww.text)
-                if i == k and st["highlight_mode"] != "none":
-                    sc = emph if ww.score >= threshold else active
-                    parts.append("{" + _on(st, sc) + "}" + txt + "{" + _off(st) + "}")
-                else:
-                    parts.append(txt)
-            events.append(f"Dialogue: 0,{format_ass_time(w.start)},{format_ass_time(end)},Default,,0,0,0,,"
-                          + blur + " ".join(parts))          # logical order; libass does the RTL reorder
+    if st["display"] == "word":
+        palette = [hex_to_bgr(c) for c in (st.get("word_colors") or [st["highlight_color"]])]
+        for k, w in enumerate(clip_words):
+            nxt = clip_words[k + 1].start if k + 1 < len(clip_words) else float("inf")
+            end = min(max(w.end + 0.10, w.start + 0.20), nxt)      # hold a little, NEVER overlap the next word
+            end = max(end, w.start + 0.05)
+            base = w.text.strip(".,!?;:…،؛؟") if st.get("strip_punct", True) else w.text
+            txt = ass_escape(base.upper() if uppercase else base)
+            col = palette[k % len(palette)]
+            tag = f"\\1c&H{col}&\\fscx70\\fscy70\\t(0,90,\\fscx108\\fscy108)\\t(90,160,\\fscx100\\fscy100)"
+            raw.append((w.start, end, "{" + tag + "}" + txt))
+    else:
+        lines = group_words(clip_words, st["max_words_per_line"], st["max_chars_per_line"])
+        for li, line in enumerate(lines):
+            limit = lines[li + 1][0].start if li + 1 < len(lines) else float("inf")
+            for k, w in enumerate(line):
+                end = min(line[k + 1].start, w.end + 0.35) if k + 1 < len(line) else w.end + 0.1
+                end = max(min(end, limit), w.start + 0.05)
+                parts = []
+                for i, ww in enumerate(line):
+                    txt = ass_escape(ww.text.upper() if uppercase else ww.text)
+                    if i == k and st["highlight_mode"] != "none":
+                        sc = emph if ww.score >= threshold else active
+                        parts.append("{" + _on(st, sc) + "}" + txt + "{" + _off(st) + "}")
+                    else:
+                        parts.append(txt)
+                raw.append((w.start, end, blur + " ".join(parts)))  # logical order; libass does the RTL reorder
+
+    events = [f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},Default,,0,0,0,,{body}"
+              for s, e, body in _finalize(raw)]
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(header + events) + "\n")
     return len(events)

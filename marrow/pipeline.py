@@ -1,10 +1,12 @@
 import json
+import re
 import shutil
+import time
 from pathlib import Path
 
 from .audio_features import assign_word_energy, compute_energy
 from .candidates import build_sentences, generate_candidates, score_candidates, shortlist
-from .captioner import generate_ass
+from .captioner import clean_words, generate_ass
 from .clip_selector import combine_scores, padded_bounds, select_clips
 from .config import load_config
 from .downloader import prepare_source
@@ -51,9 +53,20 @@ def _fallback_title(text: str) -> str:
     return snippet.rstrip(",.;:") + ("…" if len(text.split()) > 9 else "")
 
 
+def _fallback_reason(text: str) -> str:
+    sents = re.split(r"(?<=[.!?؟…])\s+", text.strip())
+    return " ".join(sents[:2])[:160]
+
+
+def _fallback_tags(text: str):
+    from .candidates import top_keywords
+
+    return top_keywords(text)
+
+
 def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_count=None,
                  clip_duration=None, platform="shorts", layout=None, use_llm=None,
-                 force=False, progress=None, config=None, on_source=None):
+                 force=False, progress=None, config=None, on_source=None, eta_holder=None):
     """Run the full pipeline. Returns a list of result dicts (also saved as manifest.json)."""
 
     def emit(stage, frac, **kw):
@@ -87,12 +100,21 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
         raise ValueError(f"Video is only {duration:.0f}s; shorter than the minimum clip length ({min_dur}s).")
     if on_source:
         on_source(src, duration)
+    eta = None
+    if eta_holder is not None:
+        from .eta import Eta
+        eta = Eta(duration, clip["target_count"], max_dur, bool(cfg["llm"]["enabled"]),
+                  Path(cfg["cache_dir"]) / "timings.json")
+        eta.update("download", 1.0)
+        eta_holder["eta"] = eta
 
     # 2. Extract audio
     audio_path = src.workdir / "audio.wav"
     if force or not audio_path.exists():
         emit("Extracting audio", 0.08)
         run_ffmpeg(["-i", src.path, "-vn", "-ac", "1", "-ar", "16000", audio_path])
+    if eta:
+        eta.update("audio", 1.0)
 
     # 3. Transcribe (cached)
     wcfg = cfg["whisper"]
@@ -100,6 +122,8 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
     words, lang = (None, None) if force else _load_words(words_path, wcfg["model"])
     if words is None:
         def tprog(frac, speed, t=None, line=None):
+            if eta:
+                eta.update("transcribe", frac)
             emit(f"Transcribing · {int(frac*100)}% · {speed:.1f}x realtime", 0.12 + 0.28 * frac,
                  log=line, scan={"t": round(t or 0.0, 2), "dur": round(duration, 2)} if t else None)
 
@@ -107,7 +131,10 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
                                  wcfg["language"], wcfg.get("beam_size", 1),
                                  wcfg.get("batch_size", 8), wcfg.get("quality", "fast"),
                                  on_progress=tprog)
+        words = clean_words(words)
         _save_words(words_path, f"auto:{lang}" if wcfg["model"] == "auto" else wcfg["model"], words)
+    else:
+        words = clean_words(words)
     if not words:
         raise ValueError("No speech was detected in this video.")
 
@@ -158,10 +185,14 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
                 c.title, c.reason, c.hashtags = parsed["title"], parsed["reason"], parsed["hashtags"]
             emit(f"Scoring clips with LLM ({n}/{len(short)})", 0.46 + 0.34 * n / len(short),
                  log=f"Scoring window {n}/{len(short)} [{c.start:.1f}s -> {c.end:.1f}s]" if parsed else None)
+            if eta:
+                eta.update("score", n / len(short))
         cache_path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
     else:
         log.warning("LLM scoring unavailable; ranking by audio/heuristics only.")
         emit("Ranking by audio and heuristics", 0.46, log="LLM unavailable; ranking by audio/heuristics only.")
+        if eta:
+            eta.update("score", 1.0)
 
     combine_scores(short, lcfg["weight"])
     chosen = select_clips(short, clip["target_count"])
@@ -186,8 +217,17 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
         "duration": round(c.end - c.start, 2), "score": round(c.final, 4),
         "title": c.title or _fallback_title(c.text), "reason": c.reason,
         "hashtags": c.hashtags, "status": "rendering", "files": {},
+        "render_pct": 0.0, "render_eta": None,
     } for rank, c in enumerate(chosen, 1)]
     emit("Rendering clips", 0.80, clips=prog_clips)
+    try:
+        from . import studio as _studio
+
+        for rank, c in enumerate(chosen, 1):
+            s, e = padded_bounds(c, clip["pad_start"], clip["pad_end"], duration)
+            _studio.make_clip_thumb(src.path, s, src.workdir / f"pre_{rank:02d}.jpg")
+    except Exception:
+        log.debug("clip preview thumbs failed", exc_info=True)
 
     import threading
     from concurrent.futures import ThreadPoolExecutor
@@ -211,7 +251,23 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
                 generate_ass(words, start, end, ass_path, cfg["captions"],
                              pcfg["res_x"], pcfg["res_y"], pcfg["caption_margin_v"])
             out_path = out_dir / f"clip_{rank:02d}_{plat}.mp4"
-            render_clip(src.path, start, end, ass_path, out_path, cfg, plat)
+            t_start = time.time()
+            last_emit = [0.0]
+
+            def rprog(frac):
+                el = time.time() - t_start
+                left = el / frac * (1 - frac) if frac > 0.05 else None
+                with lock:
+                    for pc in prog_clips:
+                        if pc["rank"] == rank:
+                            pc["render_pct"] = round(frac, 3)
+                            pc["render_eta"] = round(left, 1) if left is not None else None
+                    if el - last_emit[0] > 2.0:
+                        last_emit[0] = el
+                        emit(f"Rendering clip {rank}/{len(chosen)} ({plat})",
+                             0.80 + 0.20 * state["done"] / max(1, len(tasks)), clips=prog_clips)
+
+            render_clip(src.path, start, end, ass_path, out_path, cfg, plat, on_progress=rprog)
             outcome = (start, end, str(out_path), None)
         except Exception as e:
             outcome = (None, None, None, e)
@@ -219,6 +275,8 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
             state["done"] += 1
             finished[(rank, plat)] = outcome
             d = state["done"]
+        if eta:
+            eta.update("render", d / max(1, len(tasks)))
         emit(f"Rendering clip {rank}/{len(chosen)} ({plat})", 0.80 + 0.20 * d / max(1, len(tasks)),
              log=f"Rendered clip {rank}/{len(chosen)} ({plat})." if outcome[3] is None else None)
 
@@ -245,8 +303,8 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
             "duration": round(end - start, 2),
             "score": round(c.final, 4),
             "title": c.title or _fallback_title(c.text),
-            "reason": c.reason,
-            "hashtags": c.hashtags,
+            "reason": c.reason or _fallback_reason(c.text),
+            "hashtags": c.hashtags or _fallback_tags(c.text),
             "files": files,
         })
 

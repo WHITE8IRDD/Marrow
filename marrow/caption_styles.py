@@ -8,8 +8,11 @@ BASE = dict(
     outline_color="#000000", outline=4, shadow=2, blur=0,
     box=False, box_color="#000000", box_opacity=60,           # whole-line box (BorderStyle 3)
     highlight_mode="color",                                    # color | pill
-    pill_color="#7C5CFF", pill_text="#FFFFFF", pill_pad=10,
+    pill_color="#FFFFFF", pill_text="#000000", pill_pad=10,
     active_scale=110, emphasis_scale=125, anim="pop",          # pop | none
+    display="line",                                          # line | word (one word at a time)
+    word_colors=None,                                        # cycled per word in word mode (None = highlight_color)
+    strip_punct=True,
     position="lower",                                          # lower | center | top
     max_words_per_line=4, max_chars_per_line=22,
 )
@@ -30,7 +33,7 @@ PRESETS = {
                      uppercase=False, highlight_color="#A78BFA", outline=0, shadow=4, size=64, anim="none"),
     "pill":     dict(label="Pill", font="Poppins", font_file="Poppins-Bold.ttf",
                      font_ar="Cairo", font_ar_file="Cairo-Bold.ttf", highlight_mode="pill",
-                     pill_color="#7C5CFF", pill_text="#FFFFFF", outline=3, uppercase=False),
+                     pill_color="#FFFFFF", pill_text="#000000", outline=3, uppercase=False),
     "neon":     dict(label="Neon", font="Poppins", font_file="Poppins-Bold.ttf",
                      font_ar="Cairo", font_ar_file="Cairo-Bold.ttf",
                      highlight_color="#22E5FF", outline_color="#0077CC", outline=3, blur=2),
@@ -40,6 +43,16 @@ PRESETS = {
                      highlight_color="#FFD60A", size=60),
     "arabic":   dict(label="Arabic Bold", font="Cairo", font_file="Cairo-Bold.ttf", font_ar="Cairo",
                      font_ar_file="Cairo-Bold.ttf", uppercase=False, highlight_color="#FFE600", size=76),
+    "one-word": dict(label="One Word", display="word", font="Montserrat ExtraBold",
+                     font_file="Montserrat-ExtraBold.ttf", bold=False,
+                     font_ar="Cairo", font_ar_file="Cairo-Bold.ttf", size=120, position="center",
+                     outline=7, uppercase=True, highlight_color="#FFE600",
+                     word_colors=["#FFE600", "#FFFFFF", "#00F060"], max_words_per_line=1),
+    "one-word-clean": dict(label="One Word Clean", display="word", font="Poppins",
+                     font_file="Poppins-Bold.ttf", bold=False,
+                     font_ar="Cairo", font_ar_file="Cairo-Bold.ttf", size=104, position="lower",
+                     outline=0, shadow=6, uppercase=False, highlight_color="#FFFFFF",
+                     word_colors=["#FFFFFF"], max_words_per_line=1),
 }
 
 

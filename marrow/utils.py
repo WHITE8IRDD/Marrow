@@ -46,6 +46,38 @@ def run_ffmpeg(args, cwd=None):
         raise RuntimeError(f"ffmpeg failed:\n{e.stderr}") from e
 
 
+def run_ffmpeg_progress(args, total_sec, on_progress, cwd=None):
+    """Like run_ffmpeg, but reports 0..1 fraction via ffmpeg's progress pipe."""
+    import threading
+
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-progress", "pipe:1", "-nostats"] + [str(a) for a in args]
+    p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=True, encoding="utf-8", errors="replace")
+    err = []
+
+    def drain():
+        try:
+            err.append(p.stderr.read())
+        except Exception:
+            pass
+
+    threading.Thread(target=drain, daemon=True).start()   # drain stderr (avoids deadlock)
+    try:
+        for line in p.stdout:
+            if line.startswith("out_time_us="):
+                try:
+                    us = int(line.strip().split("=")[1])
+                except ValueError:
+                    continue
+                if us >= 0 and total_sec > 0:
+                    on_progress(max(0.0, min(1.0, us / 1e6 / total_sec)))
+    finally:
+        p.stdout.close()
+    if p.wait() != 0:
+        raise RuntimeError("ffmpeg failed:\n" + "".join(err)[-1500:])
+
+
 def probe_duration(path) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",

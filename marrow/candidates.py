@@ -23,6 +23,25 @@ def normalize_ar(text: str) -> str:
     text = AR_DIACRITICS.sub("", text)
     return text.translate(str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي"}))
 
+
+_STOP = {"the", "and", "for", "with", "that", "this", "from", "have", "has", "are", "was",
+        "were", "you", "your", "they", "their", "our", "can", "will", "just", "like", "get",
+        "got", "going", "make", "made", "know", "think", "people", "really", "very", "much",
+        "more", "most", "than", "then", "there", "what", "when", "which", "also", "into",
+        "over", "after", "about", "yourself", "because", "been", "being", "between", "both",
+        "each", "other", "such", "only", "own", "same", "does", "did", "doing", "would",
+        "could", "should", "while", "where", "whom", "whose", "down", "until", "again",
+        "once", "here", "them", "then", "these", "those", "through", "under", "very"}
+
+
+def top_keywords(text: str, n=5):
+    """Most frequent content words (any language); used for fallback hashtags."""
+    from collections import Counter
+
+    words = re.findall(r"\w+", normalize_ar(text).lower())
+    c = Counter(w for w in words if len(w) > 3 and w not in _STOP)
+    return [w for w, _ in c.most_common(n)]
+
 CONJ_START = {"and", "but", "so", "because", "which", "that", "or", "then", "also", "cause", "plus"}
 
 HOOK_RE = re.compile(

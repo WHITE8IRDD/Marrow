@@ -26,8 +26,12 @@ def make_proxy(src, workdir, duration):
 
 
 def load_words(workdir):
+    from .captioner import clean_words
+
     raw = json.loads((Path(workdir) / "words.json").read_text(encoding="utf-8"))
-    return [Word(s, e, t) for s, e, t in raw["words"]], raw
+    words = clean_words([Word(s, e, t) for s, e, t in raw["words"]])
+    raw["words"] = [[w.start, w.end, w.text] for w in words]
+    return words, raw
 
 
 def words_in_range(raw, start, end):
@@ -104,6 +108,16 @@ def render_clip_files(cfg, source, workdir, words, rank, start, end, platforms, 
         os.replace(tmp, final)
         produced[plat] = final
     return produced
+
+
+def make_clip_thumb(source, start, jpg_path):
+    """9:16 first frame of a clip window (for progress tiles). Best effort."""
+    try:
+        run_ffmpeg(["-ss", f"{start:.3f}", "-i", source, "-frames:v", "1",
+                    "-vf", "crop=ih*9/16:ih,scale=270:480,format=yuv420p", jpg_path])
+        return True
+    except Exception:
+        return False
 
 
 def make_thumb(video_path, jpg_path):
