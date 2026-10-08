@@ -83,6 +83,7 @@ clips perform best well under the cap, so the default `clip.max_duration` is 60 
   use a smaller model such as `llama3.2:3b`.
 - **Ollama not reachable**: start the Ollama app. Marrow falls back to heuristic ranking and
   logs a warning.
+- **Find video says 403 or "not a bot"**: open Settings → YouTube cookies and pick your browser (or a cookies.txt file). The preview uses the same cookies as the download now, and when the preview itself fails you can still press "Try generating anyway".
 - **yt-dlp download errors**: run `pip install -U yt-dlp`. YouTube changes often, and recent
   yt-dlp releases may also need a JavaScript runtime such as Deno (see the yt-dlp docs).
 - **Captions use the wrong font**: install the font on your system and set `captions.font`
