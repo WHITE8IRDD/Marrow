@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marrow"
+version = "0.3.0"
+description = "Local, free AI pipeline that turns long videos into captioned Shorts and Reels."
+requires-python = ">=3.10"
+dependencies = [
+    "av>=11,<15",  # faster-whisper 1.x passes metadata_errors, removed in av 15
+    "yt-dlp>=2025.1.1",
+    "faster-whisper>=1.0.0",
+    "librosa>=0.10.0",
+    "numpy>=1.24",
+    "requests>=2.31",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+ui = ["streamlit>=1.30"]
+diarization = ["pyannote.audio>=3.1", "torch>=2.0", "torchaudio>=2.0"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+marrow = "marrow.cli:main"
+marrow-ui = "marrow.server:main"
+
+[tool.setuptools.packages.find]
+include = ["marrow*"]
+
+[tool.setuptools.package-data]
+marrow = ["web/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

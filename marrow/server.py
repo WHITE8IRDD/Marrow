@@ -1,0 +1,925 @@
+"""Marrow web UI: a local HTTP server (standard library only) with a REST API,
+a single background worker, and a static single-page app in marrow/web/index.html.
+
+Run:  marrow-ui   or   python -m marrow.server
+"""
+import argparse
+import json
+import logging
+import mimetypes
+import os
+import queue
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import uuid
+import webbrowser
+import zipfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
+
+from . import __version__, studio
+from .config import deep_merge, load_config
+from .downloader import VIDEO_SUFFIXES, _find_source
+from .utils import log, probe_duration, slugify
+
+WEB_DIR = Path(__file__).parent / "web"
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
+ACTIVE = {"queued", "running"}
+
+HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+UPLOAD_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v3"}
+
+
+class ApiError(Exception):
+    def __init__(self, msg, status=400):
+        super().__init__(msg)
+        self.msg, self.status = msg, status
+
+
+class Cancelled(Exception):
+    pass
+
+
+# --------------------------------------------------------------------------- validation
+
+def _int(value, lo, hi, default):
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, value))
+
+
+def _color(value, default):
+    return value if isinstance(value, str) and HEX.match(value) else default
+
+
+def clean_job_settings(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    cs = raw.get("caption_style") if isinstance(raw.get("caption_style"), dict) else {}
+    return {
+        "clips": _int(raw.get("clips"), 1, 20, 5),
+        "duration": _int(raw.get("duration"), 15, 170, 45),
+        "platform": raw.get("platform") if raw.get("platform") in ("shorts", "reels", "both") else "shorts",
+        "layout": raw.get("layout") if raw.get("layout") in ("crop", "blur_fit") else "crop",
+        "captions": bool(raw.get("captions", True)),
+        "use_llm": bool(raw.get("use_llm", True)),
+        "zoom": bool(raw.get("zoom", False)),
+        "caption_style": {
+            "highlight_color": _color(cs.get("highlight_color"), "#FFE600"),
+            "text_color": _color(cs.get("text_color"), "#FFFFFF"),
+            "font_size": _int(cs.get("font_size"), 30, 140, 72),
+            "uppercase": bool(cs.get("uppercase", True)),
+        },
+    }
+
+
+def job_overrides(s):
+    return {
+        "captions": {"enabled": s["captions"], **s["caption_style"]},
+        "zoom": {"enabled": s["zoom"]},
+    }
+
+
+def clean_global_settings(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    w, l, r, c = (raw.get(k) if isinstance(raw.get(k), dict) else {} for k in ("whisper", "llm", "render", "captions"))
+    lang = str(w.get("language") or "").strip().lower()
+    host = str(l.get("host") or "").strip()
+    return {
+        "whisper": {
+            "model": w.get("model") if w.get("model") in WHISPER_MODELS else "small",
+            "device": w.get("device") if w.get("device") in ("auto", "cuda", "cpu") else "auto",
+            "language": lang if re.fullmatch(r"[a-z]{2,3}", lang) else None,
+        },
+        "llm": {
+            "enabled": bool(l.get("enabled", True)),
+            "model": (str(l.get("model") or "").strip()[:100] or "llama3.1:8b"),
+            "host": host if re.match(r"^https?://", host) else "http://localhost:11434",
+        },
+        "render": {
+            "encoder": r.get("encoder") if r.get("encoder") in ("libx264", "h264_nvenc") else "libx264",
+            "loudnorm": bool(r.get("loudnorm", True)),
+        },
+        "captions": {"font": (str(c.get("font") or "").strip()[:60] or "Arial")},
+    }
+
+
+# --------------------------------------------------------------------------- app state
+
+class App:
+    def __init__(self, home):
+        self.home = Path(home).resolve()
+        self.out = self.home / "output"
+        self.work = self.home / "work"
+        self.uploads = self.home / "uploads"
+        for d in (self.home, self.out, self.work, self.uploads):
+            d.mkdir(parents=True, exist_ok=True)
+        self.lock = threading.RLock()
+        self.cancel = set()
+        self.queue = queue.Queue()
+        self.projects = {}
+        self.saved_settings = {}
+        self._load()
+        threading.Thread(target=self._worker, daemon=True, name="marrow-worker").start()
+
+    # ---- persistence
+    def _load(self):
+        path = self.home / "projects.json"
+        if path.exists():
+            try:
+                for p in json.loads(path.read_text(encoding="utf-8")):
+                    if p.get("status") in ACTIVE:
+                        p["status"] = "error"
+                        p["error"] = "Interrupted: the app was closed while this was running. Use Regenerate to retry."
+                    for c in p.get("clips", []):
+                        if c.get("status") == "rendering":
+                            c["status"] = "ready"
+                    self.projects[p["id"]] = p
+            except Exception as e:
+                log.warning("Could not read projects.json (%s); starting empty.", e)
+        spath = self.home / "settings.json"
+        if spath.exists():
+            try:
+                self.saved_settings = json.loads(spath.read_text(encoding="utf-8"))
+            except Exception:
+                self.saved_settings = {}
+
+    def _save(self):
+        path = self.home / "projects.json"
+        tmp = path.with_suffix(".tmp")
+        with self.lock:
+            tmp.write_text(json.dumps(list(self.projects.values()), ensure_ascii=False, indent=1), encoding="utf-8")
+            os.replace(tmp, path)
+
+    def config_for(self, job_settings=None, extra=None):
+        cfg = load_config(str(self.home / "config.yaml"), overrides=self.saved_settings)
+        cfg["cache_dir"] = str(self.work)
+        if job_settings:
+            cfg = deep_merge(cfg, job_overrides(job_settings))
+        if extra:
+            cfg = deep_merge(cfg, extra)
+        return cfg
+
+    # ---- serialization
+    def public(self, p):
+        vid = p.get("video_id")
+        clips = []
+        for c in p.get("clips", []):
+            rev = c.get("rev", 0)
+            clips.append({
+                "rank": c["rank"], "start": c["start"], "end": c["end"], "duration": c["duration"],
+                "score": c["score"], "title": c["title"], "reason": c.get("reason", ""),
+                "hashtags": c.get("hashtags", []), "status": c.get("status", "ready"),
+                "last_error": c.get("last_error"), "platforms": list(c["files"]),
+                "urls": {pl: f"/media/{vid}/{fn}?v={rev}" for pl, fn in c["files"].items()},
+                "thumb": f"/media/{vid}/{c['thumb']}?v={rev}" if c.get("thumb") else None,
+            })
+        clips.sort(key=lambda c: c["rank"])
+        thumb = next((c["thumb"] for c in clips if c["thumb"]), None)
+        keys = ("id", "name", "source", "source_kind", "status", "stage", "progress", "created",
+                "started", "finished", "error", "video_id", "settings")
+        out = {k: p.get(k) for k in keys}
+        out.update(clips=clips, thumb=thumb)
+        return out
+
+    def get(self, pid):
+        p = self.projects.get(pid)
+        if not p:
+            raise ApiError("Project not found", 404)
+        return p
+
+    def clip(self, p, rank):
+        for c in p.get("clips", []):
+            if c["rank"] == rank:
+                return c
+        raise ApiError("Clip not found", 404)
+
+    def media_path(self, p):
+        if p.get("source_kind") == "url":
+            return _find_source(self.work / p["video_id"]) if p.get("video_id") else None
+        sp = Path(p["source"])
+        return sp if sp.exists() else None
+
+    # ---- project actions
+    def create_project(self, body):
+        text = str(body.get("url") or "").strip()
+        upload = body.get("upload")
+        settings = clean_job_settings(body.get("settings"))
+        if upload:
+            path = self.uploads / Path(str(upload)).name
+            if not path.exists():
+                raise ApiError("Uploaded file not found. Upload it again.")
+            source, kind, name = str(path), "upload", re.sub(r"^[0-9a-f]{8}_", "", path.stem)
+        elif re.match(r"^https?://", text, re.I):
+            source, kind = text, "url"
+            u = urlparse(text)
+            name = (u.netloc + u.path)[:80]
+        elif text and Path(text).expanduser().is_file():
+            path = Path(text).expanduser().resolve()
+            source, kind, name = str(path), "file", path.stem
+        else:
+            raise ApiError("Paste a valid http(s) video link, or upload a video file.")
+        pid = uuid.uuid4().hex[:10]
+        p = {"id": pid, "name": name, "source": source, "source_kind": kind, "status": "queued",
+             "stage": "Waiting in queue", "progress": 0.0, "created": time.time(), "started": None,
+             "finished": None, "error": None, "video_id": None, "settings": settings, "clips": []}
+        with self.lock:
+            self.projects[pid] = p
+            self._save()
+        self.queue.put(("pipeline", pid, {}))
+        return self.public(p)
+
+    def regenerate(self, pid, body):
+        with self.lock:
+            p = self.get(pid)
+            if p["status"] in ACTIVE or any(c.get("status") == "rendering" for c in p["clips"]):
+                raise ApiError("This project is busy. Wait for it to finish or cancel it first.", 409)
+            if body.get("settings") is not None:
+                p["settings"] = clean_job_settings(body["settings"])
+            self.cancel.discard(pid)
+            p.update(status="queued", stage="Waiting in queue", progress=0.0, error=None, finished=None)
+            self._save()
+        self.queue.put(("pipeline", pid, {}))
+        return self.public(p)
+
+    def cancel_project(self, pid):
+        with self.lock:
+            p = self.get(pid)
+            if p["status"] not in ACTIVE:
+                raise ApiError("Nothing to cancel.", 409)
+            self.cancel.add(pid)
+            if p["status"] == "queued":
+                p.update(status="cancelled", stage="Cancelled", error=None)
+            else:
+                p["stage"] = "Cancelling… (stops at the next step)"
+            self._save()
+        return self.public(p)
+
+    def delete_project(self, pid, purge):
+        with self.lock:
+            p = self.get(pid)
+            if p["status"] == "running":
+                raise ApiError("Cancel the running job before deleting this project.", 409)
+            self.cancel.add(pid)  # a queued task for this id will be skipped
+            vid = p.get("video_id")
+            others = [q for q in self.projects.values() if q["id"] != pid and q.get("video_id") == vid]
+            del self.projects[pid]
+            self._save()
+        if vid and not others:
+            shutil.rmtree(self.out / vid, ignore_errors=True)
+            if purge:
+                shutil.rmtree(self.work / vid, ignore_errors=True)
+        if purge and p.get("source_kind") == "upload":
+            Path(p["source"]).unlink(missing_ok=True)
+        return {"ok": True}
+
+    def rename(self, pid, body):
+        name = str(body.get("name") or "").strip()[:120]
+        if not name:
+            raise ApiError("Name can't be empty.")
+        with self.lock:
+            p = self.get(pid)
+            p["name"] = name
+            self._save()
+        return self.public(p)
+
+    def update_clip(self, pid, rank, body):
+        with self.lock:
+            p = self.get(pid)
+            c = self.clip(p, rank)
+            if "title" in body:
+                title = str(body["title"]).strip()[:120]
+                if not title:
+                    raise ApiError("Title can't be empty.")
+                c["title"] = title
+            if "hashtags" in body:
+                tags = body["hashtags"]
+                if isinstance(tags, str):
+                    tags = re.findall(r"[\w]+", tags)
+                c["hashtags"] = [str(t).lstrip("#").lower() for t in tags][:15]
+            self._sync_manifest(p)
+            self._save()
+        return self.public(p)
+
+    def delete_clip(self, pid, rank):
+        with self.lock:
+            p = self.get(pid)
+            c = self.clip(p, rank)
+            if c.get("status") == "rendering":
+                raise ApiError("This clip is rendering right now.", 409)
+            for fn in list(c["files"].values()) + ([c["thumb"]] if c.get("thumb") else []):
+                (self.out / p["video_id"] / fn).unlink(missing_ok=True)
+            p["clips"] = [x for x in p["clips"] if x["rank"] != rank]
+            self._sync_manifest(p)
+            self._save()
+        return self.public(p)
+
+    def transcript(self, pid, rank, start, end):
+        p = self.get(pid)
+        self.clip(p, rank)
+        try:
+            _, raw = studio.load_words(self.work / p["video_id"])
+        except FileNotFoundError:
+            raise ApiError("Transcript cache not found. Use Regenerate to rebuild it.", 404)
+        return {"words": studio.words_in_range(raw, start, end)}
+
+    def queue_rerender(self, pid, rank, body):
+        with self.lock:
+            p = self.get(pid)
+            c = self.clip(p, rank)
+            if p["status"] in ACTIVE or c.get("status") == "rendering":
+                raise ApiError("This project is busy. Try again in a moment.", 409)
+            media = self.media_path(p)
+            if not media:
+                raise ApiError("The source video is no longer available on disk. Use Regenerate to download it again.", 409)
+            try:
+                start, end = round(float(body["start"]), 2), round(float(body["end"]), 2)
+            except (KeyError, TypeError, ValueError):
+                raise ApiError("Start and end must be numbers (seconds).")
+            total = probe_duration(media)
+            cfg = self.config_for(p["settings"])
+            cap = min(cfg["platforms"][pl]["max_duration"] for pl in c["files"])
+            if start < 0 or end > total + 0.01 or end - start < 5:
+                raise ApiError(f"Choose a range inside the video ({total:.1f}s) that is at least 5 seconds long.")
+            if end - start > cap:
+                raise ApiError(f"Clips for {', '.join(c['files'])} can be at most {cap} seconds.")
+            bs = body.get("style") if isinstance(body.get("style"), dict) else {}
+            style = {}
+            for key in ("highlight_color", "text_color"):
+                if isinstance(bs.get(key), str) and HEX.match(bs[key]):
+                    style[key] = bs[key]
+            if "uppercase" in bs:
+                style["uppercase"] = bool(bs["uppercase"])
+            args = {
+                "rank": rank, "start": start, "end": min(end, total),
+                "captions": bool(body.get("captions", True)), "style": style,
+                "edits": body.get("edits") if isinstance(body.get("edits"), dict) else {},
+            }
+            c.update(status="rendering", last_error=None)
+            self._save()
+        self.queue.put(("rerender", pid, args))
+        return self.public(p)
+
+    # ---- worker
+    def _worker(self):
+        while True:
+            kind, pid, args = self.queue.get()
+            try:
+                if kind == "pipeline":
+                    self._run_pipeline(pid)
+                else:
+                    self._run_rerender(pid, **args)
+            except Exception:  # never let the worker die
+                log.exception("Worker task failed")
+            finally:
+                self.queue.task_done()
+
+    def _run_pipeline(self, pid):
+        with self.lock:
+            p = self.projects.get(pid)
+            if p is None:
+                self.cancel.discard(pid)
+                return
+            if pid in self.cancel:
+                self.cancel.discard(pid)
+                p.update(status="cancelled", stage="Cancelled")
+                self._save()
+                return
+            p.update(status="running", stage="Starting", progress=0.0, error=None, started=time.time())
+            self._save()
+            settings, source = dict(p["settings"]), p["source"]
+
+        def progress(stage, frac):
+            if pid in self.cancel:
+                raise Cancelled()
+            with self.lock:
+                p["stage"], p["progress"] = stage, round(float(frac), 3)
+
+        try:
+            from .pipeline import run_pipeline  # heavy imports happen here, not at server start
+
+            cfg = self.config_for(settings)
+            results = run_pipeline(
+                source, output_dir=str(self.out), config=cfg, clip_count=settings["clips"],
+                clip_duration=settings["duration"], platform=settings["platform"],
+                layout=settings["layout"], use_llm=settings["use_llm"], progress=progress,
+            )
+            if not results:
+                raise RuntimeError("No clips were produced.")
+            first_file = Path(next(iter(results[0]["files"].values())))
+            vid = first_file.parent.name
+            out_dir = self.out / vid
+            title = p["name"]
+            try:
+                title = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8")).get("title") or title
+            except Exception:
+                pass
+            clips = []
+            for r in results:
+                files = {pl: Path(fp).name for pl, fp in r["files"].items()}
+                thumb = f"clip_{r['rank']:02d}.jpg"
+                has_thumb = studio.make_thumb(next(iter(r["files"].values())), out_dir / thumb)
+                clips.append({
+                    "rank": r["rank"], "start": r["start"], "end": r["end"], "duration": r["duration"],
+                    "score": r["score"], "title": r["title"], "reason": r["reason"],
+                    "hashtags": r["hashtags"], "files": files, "thumb": thumb if has_thumb else None,
+                    "rev": int(time.time()), "status": "ready", "last_error": None,
+                })
+            keep = {fn for c in clips for fn in list(c["files"].values()) + ([c["thumb"]] if c["thumb"] else [])}
+            keep.add("manifest.json")
+            for f in out_dir.glob("clip_*"):
+                if f.name not in keep:
+                    f.unlink(missing_ok=True)
+            with self.lock:
+                p.update(status="done", stage="Done", progress=1.0, video_id=vid, name=title, clips=clips,
+                         finished=time.time())
+                self._sync_manifest(p)
+                self._save()
+        except Cancelled:
+            with self.lock:
+                self.cancel.discard(pid)
+                p.update(status="cancelled", stage="Cancelled")
+                self._save()
+        except Exception as e:
+            log.exception("Pipeline failed")
+            with self.lock:
+                p.update(status="error", stage="Failed", error=f"{type(e).__name__}: {str(e)[:1500]}")
+                self._save()
+
+    def _run_rerender(self, pid, rank, start, end, captions, style, edits):
+        with self.lock:
+            p = self.projects.get(pid)
+            if p is None:
+                return
+            c = self.clip(p, rank)
+            vid, files = p["video_id"], dict(c["files"])
+        try:
+            workdir, out_dir = self.work / vid, self.out / vid
+            words, raw = studio.load_words(workdir)
+            if edits and studio.apply_edits(workdir, raw, edits):
+                words, raw = studio.load_words(workdir)
+            studio.attach_energy(workdir, words)
+            cfg = self.config_for(p["settings"], extra={"captions": style})
+            media = self.media_path(p)
+            if not media:
+                raise RuntimeError("Source video is missing on disk.")
+            produced = studio.render_clip_files(cfg, media, workdir, words, rank, start, end,
+                                                list(files), out_dir, captions)
+            thumb = f"clip_{rank:02d}.jpg"
+            has_thumb = studio.make_thumb(next(iter(produced.values())), out_dir / thumb)
+            with self.lock:
+                c.update(start=start, end=end, duration=round(end - start, 2), rev=int(time.time() * 1000),
+                         status="ready", last_error=None, thumb=thumb if has_thumb else c.get("thumb"))
+                self._sync_manifest(p)
+                self._save()
+        except Exception as e:
+            log.exception("Re-render failed")
+            with self.lock:
+                c.update(status="ready", last_error=f"{type(e).__name__}: {str(e)[:800]}")
+                self._save()
+
+    def _sync_manifest(self, p):
+        """Keep output/<id>/manifest.json in line with edits made in the UI."""
+        vid = p.get("video_id")
+        if not vid:
+            return
+        data = {"source": p["source"], "title": p["name"], "clips": [{
+            "rank": c["rank"], "start": c["start"], "end": c["end"], "duration": c["duration"],
+            "score": c["score"], "title": c["title"], "reason": c.get("reason", ""),
+            "hashtags": c.get("hashtags", []),
+            "files": {pl: str(self.out / vid / fn) for pl, fn in c["files"].items()},
+        } for c in sorted(p["clips"], key=lambda c: c["rank"])]}
+        try:
+            (self.out / vid / "manifest.json").write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+
+    # ---- misc
+    def system(self):
+        cfg = self.config_for()
+        info = {
+            "ffmpeg": bool(shutil.which("ffmpeg") and shutil.which("ffprobe")),
+            "ollama": {"enabled": cfg["llm"]["enabled"], "host": cfg["llm"]["host"], "model": cfg["llm"]["model"],
+                       "reachable": False, "model_ready": False, "models": []},
+            "gpu": False,
+        }
+        try:
+            import requests
+
+            r = requests.get(cfg["llm"]["host"].rstrip("/") + "/api/tags", timeout=2)
+            r.raise_for_status()
+            names = [m.get("name", "") for m in r.json().get("models", [])]
+            want = cfg["llm"]["model"]
+            info["ollama"].update(reachable=True, models=names, model_ready=want in names or f"{want}:latest" in names)
+        except Exception:
+            pass
+        try:
+            import ctranslate2
+
+            info["gpu"] = ctranslate2.get_cuda_device_count() > 0
+        except Exception:
+            pass
+        return info
+
+    def settings(self):
+        cfg = self.config_for()
+        return {
+            "version": __version__, "home": str(self.home),
+            "settings": {"whisper": {k: cfg["whisper"].get(k) for k in ("model", "device", "language")},
+                         "llm": {k: cfg["llm"][k] for k in ("enabled", "model", "host")},
+                         "render": {k: cfg["render"][k] for k in ("encoder", "loudnorm")},
+                         "captions": {"font": cfg["captions"]["font"]}},
+            "job_defaults": clean_job_settings({
+                "clips": cfg["clip"]["target_count"], "duration": 45,
+                "caption_style": {"highlight_color": cfg["captions"]["highlight_color"],
+                                  "text_color": cfg["captions"]["text_color"],
+                                  "font_size": cfg["captions"]["font_size"],
+                                  "uppercase": cfg["captions"]["uppercase"]},
+                "use_llm": cfg["llm"]["enabled"]}),
+        }
+
+    def save_settings(self, raw):
+        cleaned = clean_global_settings(raw) if raw else {}
+        with self.lock:
+            self.saved_settings = cleaned
+            (self.home / "settings.json").write_text(json.dumps(cleaned, indent=2), encoding="utf-8")
+        return self.settings()
+
+    def make_zip(self, pid):
+        p = self.get(pid)
+        if not p.get("clips"):
+            raise ApiError("This project has no clips to export.", 409)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        tmp.close()
+        with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_STORED) as z:
+            for c in p["clips"]:
+                for fn in c["files"].values():
+                    fp = self.out / p["video_id"] / fn
+                    if fp.exists():
+                        z.write(fp, fn)
+            mf = self.out / p["video_id"] / "manifest.json"
+            if mf.exists():
+                z.write(mf, "manifest.json")
+        return Path(tmp.name), slugify(p["name"]) + "_clips.zip"
+
+    def open_folder(self, pid=None):
+        target = self.home
+        if pid:
+            p = self.get(pid)
+            if p.get("video_id"):
+                target = self.out / p["video_id"]
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(target)])
+            else:
+                subprocess.Popen(["xdg-open", str(target)])
+        except Exception as e:
+            raise ApiError(f"Could not open the folder: {e}", 500)
+        return {"ok": True, "path": str(target)}
+
+
+# --------------------------------------------------------------------------- HTTP layer
+
+ROUTES = []
+
+
+def route(method, pattern):
+    rx = re.compile(pattern)
+
+    def deco(fn):
+        ROUTES.append((method, rx, fn))
+        return fn
+    return deco
+
+
+class Handler(BaseHTTPRequestHandler):
+    app: App = None  # set in main()
+    server_version = f"Marrow/{__version__}"
+
+    def log_message(self, fmt, *args):  # keep the console readable
+        pass
+
+    # -- helpers
+    def send_json(self, obj, status=200):
+        data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def read_json(self, limit=5_000_000):
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > limit:
+            raise ApiError("Request too large", 413)
+        if n == 0:
+            return {}
+        try:
+            data = json.loads(self.rfile.read(n).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            raise ApiError("Invalid JSON body")
+        return data if isinstance(data, dict) else {}
+
+    def host_ok(self):
+        bound = self.server.server_address[0]
+        if bound not in ("127.0.0.1", "::1", "localhost"):
+            return True  # user explicitly exposed the server; Host check doesn't apply
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
+        return host in LOOPBACK_HOSTS
+
+    def send_file(self, path, download_name=None, delete_after=False):
+        size = path.stat().st_size
+        ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        start, end, status = 0, size - 1, 200
+        rng = self.headers.get("Range")
+        if rng:
+            m = re.match(r"bytes=(\d*)-(\d*)$", rng.strip())
+            if m and (m.group(1) or m.group(2)):
+                if m.group(1):
+                    start = int(m.group(1))
+                    end = int(m.group(2)) if m.group(2) else size - 1
+                else:  # suffix range: last N bytes
+                    start = max(0, size - int(m.group(2)))
+                end = min(end, size - 1)
+                if start > end or start >= size:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                status = 206
+        length = end - start + 1
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        self.send_header("Cache-Control", "no-cache")
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        if download_name:
+            safe = re.sub(r'[^A-Za-z0-9._-]+', "_", download_name)
+            self.send_header("Content-Disposition", f'attachment; filename="{safe}"')
+        self.end_headers()
+        try:
+            with open(path, "rb") as f:
+                f.seek(start)
+                left = length
+                while left > 0:
+                    chunk = f.read(min(1 << 20, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+        finally:
+            if delete_after:
+                path.unlink(missing_ok=True)
+
+    def dispatch(self, method):
+        u = urlparse(self.path)
+        path, q = unquote(u.path), parse_qs(u.query)
+        try:
+            if not self.host_ok():
+                raise ApiError("Forbidden host", 403)
+            if method != "GET" and self.headers.get("X-Marrow") != "1":
+                raise ApiError("Missing X-Marrow header", 403)
+            for m, rx, fn in ROUTES:
+                if m == method:
+                    mm = rx.fullmatch(path)
+                    if mm:
+                        return fn(self, q, *mm.groups())
+            raise ApiError("Not found", 404)
+        except ApiError as e:
+            self._safe_json({"error": e.msg}, e.status)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+        except Exception as e:
+            log.exception("Unhandled error")
+            self._safe_json({"error": f"{type(e).__name__}: {e}"}, 500)
+
+    def _safe_json(self, obj, status):
+        try:
+            self.send_json(obj, status)
+        except Exception:
+            pass
+
+    def do_GET(self):
+        self.dispatch("GET")
+
+    def do_POST(self):
+        self.dispatch("POST")
+
+    def do_PUT(self):
+        self.dispatch("PUT")
+
+    def do_PATCH(self):
+        self.dispatch("PATCH")
+
+    def do_DELETE(self):
+        self.dispatch("DELETE")
+
+
+@route("GET", r"/")
+def r_index(h, q):
+    html = (WEB_DIR / "index.html").read_bytes()
+    h.send_response(200)
+    h.send_header("Content-Type", "text/html; charset=utf-8")
+    h.send_header("Content-Length", str(len(html)))
+    h.send_header("Cache-Control", "no-store")
+    h.end_headers()
+    h.wfile.write(html)
+
+
+@route("GET", r"/api/projects")
+def r_list(h, q):
+    with h.app.lock:
+        items = sorted(h.app.projects.values(), key=lambda p: p["created"], reverse=True)
+        h.send_json({"projects": [h.app.public(p) for p in items]})
+
+
+@route("GET", r"/api/projects/([0-9a-f]+)")
+def r_get(h, q, pid):
+    with h.app.lock:
+        h.send_json(h.app.public(h.app.get(pid)))
+
+
+@route("POST", r"/api/projects")
+def r_create(h, q):
+    h.send_json(h.app.create_project(h.read_json()), 201)
+
+
+@route("POST", r"/api/upload")
+def r_upload(h, q):
+    name = Path(unquote((q.get("filename") or [""])[0])).name
+    suffix = Path(name).suffix.lower()
+    if suffix not in UPLOAD_SUFFIXES:
+        raise ApiError("Unsupported file type. Use " + ", ".join(sorted(UPLOAD_SUFFIXES)) + ".")
+    n = int(h.headers.get("Content-Length") or 0)
+    if n <= 0:
+        raise ApiError("Empty upload.")
+    stored = f"{uuid.uuid4().hex[:8]}_{slugify(Path(name).stem)}{suffix}"
+    dest = h.app.uploads / stored
+    left = n
+    try:
+        with open(dest, "wb") as f:
+            while left > 0:
+                chunk = h.rfile.read(min(1 << 20, left))
+                if not chunk:
+                    break
+                f.write(chunk)
+                left -= len(chunk)
+        if left:
+            raise ApiError("Upload was interrupted.")
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
+    h.send_json({"upload": stored, "size": n, "name": name}, 201)
+
+
+@route("POST", r"/api/projects/([0-9a-f]+)/regenerate")
+def r_regen(h, q, pid):
+    h.send_json(h.app.regenerate(pid, h.read_json()))
+
+
+@route("POST", r"/api/projects/([0-9a-f]+)/cancel")
+def r_cancel(h, q, pid):
+    h.send_json(h.app.cancel_project(pid))
+
+
+@route("DELETE", r"/api/projects/([0-9a-f]+)")
+def r_delete(h, q, pid):
+    h.send_json(h.app.delete_project(pid, (q.get("purge") or ["0"])[0] == "1"))
+
+
+@route("PATCH", r"/api/projects/([0-9a-f]+)")
+def r_rename(h, q, pid):
+    h.send_json(h.app.rename(pid, h.read_json()))
+
+
+@route("PATCH", r"/api/projects/([0-9a-f]+)/clips/(\d+)")
+def r_clip_patch(h, q, pid, rank):
+    h.send_json(h.app.update_clip(pid, int(rank), h.read_json()))
+
+
+@route("DELETE", r"/api/projects/([0-9a-f]+)/clips/(\d+)")
+def r_clip_delete(h, q, pid, rank):
+    h.send_json(h.app.delete_clip(pid, int(rank)))
+
+
+@route("POST", r"/api/projects/([0-9a-f]+)/clips/(\d+)/rerender")
+def r_rerender(h, q, pid, rank):
+    h.send_json(h.app.queue_rerender(pid, int(rank), h.read_json()))
+
+
+@route("GET", r"/api/projects/([0-9a-f]+)/clips/(\d+)/transcript")
+def r_transcript(h, q, pid, rank):
+    try:
+        start, end = float(q["start"][0]), float(q["end"][0])
+    except (KeyError, ValueError, IndexError):
+        raise ApiError("start and end query parameters are required")
+    h.send_json(h.app.transcript(pid, int(rank), start, end))
+
+
+@route("GET", r"/api/projects/([0-9a-f]+)/zip")
+def r_zip(h, q, pid):
+    path, name = h.app.make_zip(pid)
+    h.send_file(path, download_name=name, delete_after=True)
+
+
+@route("POST", r"/api/open-folder")
+def r_open(h, q):
+    h.send_json(h.app.open_folder(h.read_json().get("project")))
+
+
+@route("GET", r"/api/system")
+def r_system(h, q):
+    h.send_json(h.app.system())
+
+
+@route("GET", r"/api/settings")
+def r_settings(h, q):
+    h.send_json(h.app.settings())
+
+
+@route("PUT", r"/api/settings")
+def r_settings_put(h, q):
+    h.send_json(h.app.save_settings(h.read_json()))
+
+
+@route("GET", r"/media/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)")
+def r_media(h, q, vid, fname):
+    path = (h.app.out / vid / fname).resolve()
+    if h.app.out not in path.parents or not path.is_file():
+        raise ApiError("File not found", 404)
+    dl = fname if (q.get("download") or ["0"])[0] == "1" else None
+    h.send_file(path, download_name=dl)
+
+
+@route("GET", r"/source/([A-Za-z0-9._-]+)")
+def r_source(h, q, vid):
+    with h.app.lock:
+        p = next((x for x in h.app.projects.values() if x.get("video_id") == vid), None)
+    media = h.app.media_path(p) if p else None
+    if not media:
+        raise ApiError("Source video not found", 404)
+    h.send_file(media)
+
+
+# --------------------------------------------------------------------------- entry point
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="marrow-ui", description="Marrow web interface")
+    ap.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1, local only)")
+    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--home", default=".", help="Folder for output/, work/, uploads/ and projects.json")
+    ap.add_argument("--no-browser", action="store_true")
+    args = ap.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    try:
+        from .utils import require_ffmpeg
+
+        require_ffmpeg()
+    except RuntimeError as e:
+        log.warning("WARNING: %s (the UI will start, but processing needs FFmpeg)", e)
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        log.warning("WARNING: bound to %s. This app has no login; anyone on your network can use it.", args.host)
+
+    Handler.app = App(args.home)
+    server = None
+    for port in range(args.port, args.port + 10):
+        try:
+            server = ThreadingHTTPServer((args.host, port), Handler)
+            break
+        except OSError:
+            continue
+    if server is None:
+        sys.exit(f"Could not bind to ports {args.port}-{args.port + 9}.")
+    shown = "localhost" if args.host in ("127.0.0.1", "0.0.0.0") else args.host
+    url = f"http://{shown}:{server.server_address[1]}/"
+    print(f"\n  Marrow is running at {url}\n  Data folder: {Handler.app.home}\n  Press Ctrl+C to stop.\n")
+    if not args.no_browser:
+        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopping…")
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

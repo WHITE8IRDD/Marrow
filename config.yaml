@@ -1,0 +1,72 @@
+# Marrow configuration. Any key you omit falls back to the built-in default.
+
+whisper:
+  model: small                 # tiny, base, small, medium, large-v3
+  device: auto                 # auto, cuda, cpu
+  compute_type: int8_float16   # int8_float16 is safe on GTX 16xx; try float16 on RTX cards
+  language: null               # null = auto-detect, or e.g. "en"
+  beam_size: 5
+
+llm:
+  enabled: true
+  model: llama3.1:8b           # alternatives: qwen2.5:7b-instruct (good at JSON), llama3.2:3b (fast)
+  host: http://localhost:11434
+  timeout: 120
+  max_candidates: 24           # how many shortlisted windows the LLM judges
+  weight: 0.65                 # final = weight*LLM + (1-weight)*heuristic
+
+diarization:
+  enabled: false               # needs: pip install -e ".[diarization]" and HF_TOKEN
+  hf_token: ""
+
+clip:
+  min_duration: 20
+  max_duration: 60             # your preferred ceiling; platform caps below also apply
+  target_count: 5
+  pad_start: 0.15              # seconds of lead-in before the first word
+  pad_end: 0.35                # seconds of tail after the last word
+
+render:
+  layout: crop                 # crop (center crop) or blur_fit (full frame over blurred background)
+  encoder: libx264             # libx264 or h264_nvenc (NVIDIA hardware encoder)
+  preset: fast                 # libx264 preset
+  crf: 20                      # quality (lower = better); also used as -cq for nvenc
+  fps: 30
+  loudnorm: true               # normalize loudness to roughly -16 LUFS
+
+captions:
+  enabled: true
+  font: Arial                  # install a bold font like Montserrat ExtraBold for a better look
+  bold: true
+  font_size: 72
+  uppercase: true
+  max_words_per_line: 4
+  max_chars_per_line: 22
+  text_color: "#FFFFFF"        # normal word color (#RRGGBB)
+  highlight_color: "#FFE600"   # active word color
+  outline_color: "#000000"
+  outline: 4
+  shadow: 2
+  active_scale: 110            # % size of the word being spoken
+  emphasis_scale: 125          # % size when the word is also high-energy
+  emphasis_percentile: 85      # top (100 - x)% loudest words count as emphasized
+
+zoom:
+  enabled: false               # slow push-in; only with layout: crop; slower to render
+  max_zoom: 1.12
+  speed: 0.0004                # zoom increase per frame
+
+# Limits change over time; verify against the platform's current rules.
+platforms:
+  shorts:
+    res_x: 1080
+    res_y: 1920
+    max_duration: 180          # YouTube Shorts: up to 3 minutes (since Oct 2024)
+    caption_margin_v: 420      # px from the bottom, above the Shorts UI
+  reels:
+    res_x: 1080
+    res_y: 1920
+    max_duration: 90           # conservative; Facebook's limit has changed several times
+    caption_margin_v: 460
+
+cache_dir: work
