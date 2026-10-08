@@ -387,8 +387,12 @@ class App:
         settings = clean_job_settings(body.get("settings"))
         if probe_id:
             pr = probe.get(str(probe_id))
-            if not pr or pr["state"] != "ready" or not pr.get("info"):
-                raise ApiError("Video preview is not ready yet. Wait for it to finish loading.")
+            # Generating only needs the title and the link. The preview may still be loading;
+            # the pipeline downloads the full video itself, so don't make the user wait for it.
+            if not pr or pr["state"] not in ("found", "preview", "ready") or not pr.get("info"):
+                raise ApiError("This video isn't ready yet. Paste the link again and wait for the title to appear.")
+            if pr["state"] != "ready":
+                probe.cancel(str(probe_id))
             info = pr["info"]
             source, kind, name = info["url"], "url", info.get("title") or "video"
             try:  # publish the preview as this project's proxy now, so the scan panel has video instantly
@@ -1335,6 +1339,39 @@ class Handler(BaseHTTPRequestHandler):
             if delete_after:
                 path.unlink(missing_ok=True)
 
+    def proxy_stream(self, src):
+        """Relay a site's progressive video to the page, honouring Range so seeking works."""
+        import urllib.error
+        import urllib.request
+
+        if not re.match(r"^https?://", str(src.get("url") or ""), re.I):
+            raise ApiError("Not found", 404)  # only web links are relayed, never local files
+        headers = {"User-Agent": "Mozilla/5.0", **(src.get("headers") or {})}
+        if self.headers.get("Range"):
+            headers["Range"] = self.headers.get("Range")
+        try:
+            up = urllib.request.urlopen(urllib.request.Request(src["url"], headers=headers), timeout=20)
+        except urllib.error.HTTPError as e:
+            raise ApiError(f"The site refused the preview ({e.code}). Paste the link again.", 502)
+        except Exception:
+            raise ApiError("Couldn't reach the site for the preview. Check the connection and try again.", 502)
+        with up:
+            self.send_response(up.status)
+            for k in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
+                v = up.headers.get(k)
+                if v:
+                    self.send_header(k, v)
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            try:
+                while True:
+                    chunk = up.read(256 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+
     def dispatch(self, method):
         u = urlparse(self.path)
         path, q = unquote(u.path), parse_qs(u.query)
@@ -1634,11 +1671,15 @@ def r_probe_get(h, q, pid):
         raise ApiError("Probe not found", 404)
     info = pr.get("info") or {}
     thumb_local = (Path(pr["dir"]) / "thumb.jpg").exists()
+    if pr["state"] != "ready":
+        preview = None
+    else:  # streamed straight from the site when possible, else the downloaded file
+        preview = f"/api/probe/{pid}/stream" if info.get("stream") else f"/api/probe/{pid}/preview"
     h.send_json({
         "state": pr["state"], "progress": pr.get("progress", 0), "error": pr.get("error"),
         "info": {k: info.get(k) for k in ("title", "channel", "duration", "live", "url", "video_id")} if info else None,
         "thumb": f"/api/probe/{pid}/thumb" if thumb_local else (info.get("thumbnail") if info else None),
-        "preview": f"/api/probe/{pid}/preview" if pr["state"] == "ready" else None,
+        "preview": preview,
     })
 
 
@@ -1651,6 +1692,17 @@ def r_probe_thumb(h, q, pid):
     if h.app.probes.resolve() not in path.parents or not path.is_file():
         raise ApiError("Not ready yet", 404)
     h.send_file(path)
+
+
+@route("GET", r"/api/probe/([0-9a-f]+)/stream")
+def r_probe_stream(h, q, pid):
+    pr = probe.get(pid)
+    if not pr:
+        raise ApiError("Probe not found", 404)
+    src = (pr.get("info") or {}).get("stream")
+    if pr["state"] != "ready" or not src:
+        raise ApiError("Not ready yet", 404)
+    h.proxy_stream(src)
 
 
 @route("GET", r"/api/probe/([0-9a-f]+)/preview")

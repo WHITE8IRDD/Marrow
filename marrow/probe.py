@@ -21,10 +21,11 @@ MAX_AGE = 24 * 3600
 
 PREVIEW_EXTS = (".mp4", ".mkv", ".webm", ".mov", ".m4v")
 PREVIEW_FORMATS = (
-    "bv*[height<=480]+ba/b[height<=480]/b",   # 480p video + audio, merged to mp4
-    "b[height<=480]/b",                       # one file, 480p or smaller
-    "b",                                      # anything playable
+    "b[height<=480][ext=mp4]/b[height<=480]",  # one progressive file: no merge step, fastest
+    "bv*[height<=480]+ba/b[height<=480]/b",    # 480p video + audio, merged to mp4
+    "b",                                       # anything playable
 )
+STREAM_EXTS = ("mp4", "webm", "m4v")          # what a browser <video> can play as-is
 # Same chain as the real download (downloader.PLAYER_CLIENT_CHAIN), so the preview and the
 # download can never disagree about which clients are tried.
 PLAYER_CLIENTS = PLAYER_CLIENT_CHAIN
@@ -42,11 +43,45 @@ def _opts(cfg, extra=None, client=None):
     return o
 
 
+def stream_format(i):
+    """A single progressive http(s) file with picture and sound that a browser plays as-is.
+
+    When there is one, the Find-video preview streams it through this server straight away,
+    so nothing has to be downloaded first. Prefers the best quality at or under 480p, else the
+    smallest one above it. Returns None for HLS/DASH-only sites; those use the download path.
+    """
+    def rank(f):
+        h = f.get("height") or 0
+        if 0 < h <= 480:
+            return (2, h)
+        if h > 480:
+            return (1, -h)
+        return (0, 0)
+
+    cands = [f for f in (i.get("formats") or [])
+             if f.get("url")
+             and str(f.get("protocol") or "") in ("http", "https")
+             and f.get("vcodec") != "none" and f.get("acodec") != "none"   # None = unknown, e.g. a plain .mp4 link
+             and str(f.get("ext") or "") in STREAM_EXTS]
+    if not cands:
+        return None
+    f = max(cands, key=rank)
+    return {"url": f["url"], "headers": dict(f.get("http_headers") or i.get("http_headers") or {}),
+            "ext": f.get("ext")}
+
+
 def _preview_result(i, url):
     return {"title": i.get("title"), "channel": i.get("channel") or i.get("uploader"),
             "duration": i.get("duration"), "thumbnail": i.get("thumbnail"),
             "live": bool(i.get("is_live")), "url": i.get("webpage_url") or url,
-            "video_id": i.get("id")}
+            "video_id": i.get("id"), "stream": stream_format(i)}
+
+
+class _Cancelled(BaseException):
+    """Stops a preview download when the user has already generated from it.
+
+    A BaseException, so the per-format `except Exception` retries inside fetch_preview don't swallow it.
+    """
 
 
 def _note_missing_browser_db(eff, err):
@@ -109,6 +144,10 @@ def fetch_preview(pid, url, out_dir, cfg=None):
     import yt_dlp
 
     def hook(d):
+        with _LOCK:
+            cancelled = pid in PROBES and PROBES[pid].get("cancel")
+        if cancelled:
+            raise _Cancelled()
         if d["status"] == "downloading":
             tot = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             with _LOCK:
@@ -184,13 +223,21 @@ def _save_thumb(url, d):
         pass
 
 
+_REUSABLE = ("fetching", "found", "preview", "ready")
+
+
 def start(url, base_dir, cfg=None):
+    """Start reading `url`. A link that is already being read (or was read) is reused, not refetched."""
     sweep()
+    with _LOCK:
+        for pid, v in PROBES.items():
+            if v.get("url") == url and v.get("state") in _REUSABLE and not v.get("cancel"):
+                return pid
     pid = uuid.uuid4().hex[:12]
     d = Path(base_dir) / pid
     d.mkdir(parents=True, exist_ok=True)
     with _LOCK:
-        PROBES[pid] = {"state": "fetching", "info": None, "progress": 0,
+        PROBES[pid] = {"state": "fetching", "info": None, "progress": 0, "url": url,
                        "dir": str(d), "error": None, "born": time.time()}
 
     def run():
@@ -202,13 +249,24 @@ def start(url, base_dir, cfg=None):
                 raise ValueError("Could not read video info from this link.")
             with _LOCK:
                 PROBES[pid].update(info=info, state="found")
-            _save_thumb(info.get("thumbnail"), d)
+            # The thumbnail is cosmetic: fetch it beside the preview, never in front of it.
+            threading.Thread(target=_save_thumb, args=(info.get("thumbnail"), d), daemon=True,
+                             name=f"marrow-thumb-{pid}").start()
+            if info.get("stream"):
+                # Plays straight from the site through /api/probe/<id>/stream: nothing to download.
+                with _LOCK:
+                    PROBES[pid].update(state="ready", progress=1.0)
+                return
             with _LOCK:
                 PROBES[pid]["state"] = "preview"
             fetch_preview(pid, url, d, cfg)
             _strip_preview(d)
             with _LOCK:
                 PROBES[pid].update(state="ready", progress=1.0)
+        except _Cancelled:
+            with _LOCK:
+                if pid in PROBES:
+                    PROBES[pid].update(state="cancelled")
         except Exception as e:
             # User-facing messages (sign-in checks, 403s) are shown as written; anything else keeps its type.
             text = str(e)[:300] if getattr(e, "user_facing", False) else f"{type(e).__name__}: {str(e)[:300]}"
@@ -218,6 +276,13 @@ def start(url, base_dir, cfg=None):
 
     threading.Thread(target=run, daemon=True, name=f"marrow-probe-{pid}").start()
     return pid
+
+
+def cancel(pid):
+    """The user generated from this probe, so stop downloading its preview (it isn't needed)."""
+    with _LOCK:
+        if pid in PROBES and PROBES[pid]["state"] in ("fetching", "found", "preview"):
+            PROBES[pid]["cancel"] = True
 
 
 def get(pid):
