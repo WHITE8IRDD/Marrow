@@ -729,9 +729,9 @@ async function pollProbe() {
 function friendlyProbeError(msg) {
   const m = String(msg || '');
   if (/sign in to confirm|not a bot|\bbot\b/i.test(m))
-    return { title: 'YouTube asked for a sign-in check', body: 'Marrow tried every YouTube client. Sign in to YouTube in Firefox (or in Chrome or Edge with that browser closed), then pick it under Settings → YouTube cookies. If it still fails, run: pip install -U "yt-dlp[default,deno]".', warn: true, settings: true };
+    return { title: 'YouTube asked for a sign-in check', body: 'Marrow tried every YouTube client. Sign in to YouTube in Firefox or Chromium (or in Chrome or Edge with that browser closed), then pick it under Settings → YouTube cookies (optional, only needed when YouTube blocks downloads). If it still fails, run: pip install -U "yt-dlp[default,deno]".', warn: true, settings: true };
   if (/403|forbidden/i.test(m))
-    return { title: 'YouTube refused the preview (403)', body: 'Pick a browser you are signed in to under Settings → YouTube cookies, and run: pip install -U "yt-dlp[default,deno]". You can still generate: Marrow retries with other clients.', warn: true, settings: true };
+    return { title: 'YouTube refused the preview (403)', body: 'Pick a browser you are signed in to (Firefox or Chromium work well) under Settings → YouTube cookies (optional), and run: pip install -U "yt-dlp[default,deno]". You can still generate: Marrow retries with other clients.', warn: true, settings: true };
   if (/private|unavailable|deleted|region|geo|404|not found/i.test(m))
     return { title: 'Video unavailable', body: 'This video can’t be accessed. It may be private, deleted, or blocked in your region.', warn: true };
   if (/no playable preview|not written/i.test(m))
@@ -953,10 +953,10 @@ function friendlyError(err) {
   const e = err || '';
   if (/not a bot|sign in to confirm|sign in to youtube/i.test(e)) return ['YouTube asked for a sign-in check',
     'Marrow tried every YouTube client it has, and YouTube still wants a signed-in browser session.',
-    'Update yt-dlp (pip install -U "yt-dlp[default,deno]"), then open Settings → YouTube cookies, sign in to YouTube in that browser and pick it. Press Retry.'];
+    'Update yt-dlp (pip install -U "yt-dlp[default,deno]"), then optionally open Settings → YouTube cookies, sign in to YouTube in Firefox or Chromium (or another browser) and pick it. Press Retry.'];
   if (/403|Forbidden/i.test(e)) return ['YouTube refused the request (403)',
     'Every player client was refused with 403 Forbidden.',
-    'Update yt-dlp, set YouTube cookies under Settings → YouTube cookies, then press Retry. If it keeps failing, try again later or from another network.'];
+    'Update yt-dlp, optionally set YouTube cookies under Settings → YouTube cookies, then press Retry. If it keeps failing, try again later or from another network.'];
   if (/Live streams?/i.test(e)) return ['Live stream', 'Live streams are not supported.',
     'Wait for the stream to end and become a regular video.'];
   if (/Private|unavailable|404|not found|region|geo-block/i.test(e)) return ['Video unavailable', 'This video cannot be accessed.',
@@ -1995,11 +1995,11 @@ function viewSettings() {
         <div class="actions" style="margin-top:14px"><button class="btn" data-act="open-folder">${ico('folder')}Open data folder</button></div>
       </section>
       <section class="card">
-        <div class="card-head"><div><h3>YouTube cookies</h3><p class="hint">Used by the preview and the download. Firefox is usually the least trouble: sign in to YouTube in it, then pick it here. A cookies.txt file works with any browser.</p></div></div>
+        <div class="card-head"><div><h3>YouTube cookies (optional)</h3><p class="hint">Optional. Most videos work without cookies; only set this if YouTube asks for a sign-in check or returns 403. Firefox or Chromium are usually the least trouble: sign in to YouTube in it, then pick it here. A cookies.txt file works with any browser.</p></div></div>
         <div class="form">
-          <div class="field"><span class="fl">Use cookies from browser</span>${sel('s-cookie', [['', 'None'], ['chrome', 'Chrome'], ['firefox', 'Firefox'], ['edge', 'Edge'], ['brave', 'Brave'], ['safari', 'Safari']], s.cookies?.from_browser || '')}</div>
+          <div class="field"><span class="fl">Use cookies from browser</span>${sel('s-cookie', [['', 'None'], ['chromium', 'Chromium'], ['firefox', 'Firefox'], ['chrome', 'Chrome'], ['edge', 'Edge'], ['brave', 'Brave'], ['safari', 'Safari']], s.cookies?.from_browser || '')}</div>
           <div class="field"><span class="fl">…or a cookies.txt file</span><input class="txt" id="s-cookiefile" placeholder="C:\\cookies.txt" value="${esc(s.cookies?.cookiefile || '')}"></div>
-          <div class="field full"><p class="hint">Sign in to YouTube in that browser first. Chrome and Edge lock their cookie database while open. If you see “could not copy cookie database”, close the browser or export a cookies.txt file.</p></div>
+          <div class="field full"><p class="hint">Sign in to YouTube in that browser first. Chromium, Chrome and Edge lock their cookie database while open. If you see “could not copy cookie database”, close the browser or export a cookies.txt file. If the saved browser isn't installed, Marrow retries without browser cookies.</p></div>
         </div>
       </section>
       <section class="card">

@@ -10,7 +10,10 @@ import time
 import uuid
 from pathlib import Path
 
-from .downloader import PLAYER_CLIENT_CHAIN, give_up, is_blocked_error
+from .downloader import (PLAYER_CLIENT_CHAIN, _browser_name, _has_browser_cookies,
+                         _without_browser_cookies, give_up, is_blocked_error,
+                         is_missing_browser_db)
+from .utils import log
 
 PROBES = {}                      # id -> dict(state, info, progress, error, dir)
 _LOCK = threading.Lock()
@@ -39,21 +42,47 @@ def _opts(cfg, extra=None, client=None):
     return o
 
 
+def _preview_result(i, url):
+    return {"title": i.get("title"), "channel": i.get("channel") or i.get("uploader"),
+            "duration": i.get("duration"), "thumbnail": i.get("thumbnail"),
+            "live": bool(i.get("is_live")), "url": i.get("webpage_url") or url,
+            "video_id": i.get("id")}
+
+
+def _note_missing_browser_db(eff, err):
+    """Drop cookies-from-browser after a missing-database error. Returns the new cfg."""
+    browser = _browser_name(eff) or "saved browser"
+    log.warning("Browser cookies unavailable (%s is not installed or has no profile); "
+                "retrying without browser cookies: %s", browser, err)
+    return _without_browser_cookies(eff)
+
+
 def probe(url, cfg=None):
-    """Metadata only. Raises the last error when every player client fails."""
+    """Metadata only. Raises the last error when every player client fails.
+
+    If the saved browser is not installed, the same client is retried once without
+    cookies-from-browser, and the rest of the chain stays on the no-browser path.
+    """
     import yt_dlp
 
     errors = []
+    eff = cfg
     for client in PLAYER_CLIENTS:
         try:
-            with yt_dlp.YoutubeDL(_opts(cfg, {"skip_download": True}, client)) as y:
+            with yt_dlp.YoutubeDL(_opts(eff, {"skip_download": True}, client)) as y:
                 i = y.extract_info(url, download=False)
-            return {"title": i.get("title"), "channel": i.get("channel") or i.get("uploader"),
-                    "duration": i.get("duration"), "thumbnail": i.get("thumbnail"),
-                    "live": bool(i.get("is_live")), "url": i.get("webpage_url") or url,
-                    "video_id": i.get("id")}
-        except Exception as e:  # try the next player client
-            errors.append(e)
+            return _preview_result(i, url)
+        except Exception as e:
+            if is_missing_browser_db(e) and _has_browser_cookies(eff):
+                eff = _note_missing_browser_db(eff, e)
+                try:
+                    with yt_dlp.YoutubeDL(_opts(eff, {"skip_download": True}, client)) as y:
+                        i = y.extract_info(url, download=False)
+                    return _preview_result(i, url)
+                except Exception as e2:  # try the next player client, still without browser cookies
+                    errors.append(e2)
+                continue
+            errors.append(e)  # try the next player client
     raise give_up(errors, "Reading the video", cfg, url=url)
 
 
@@ -87,19 +116,38 @@ def fetch_preview(pid, url, out_dir, cfg=None):
                     PROBES[pid]["progress"] = round(d.get("downloaded_bytes", 0) / tot, 3) if tot else 0
 
     errors = []
+    eff = cfg
     for client in PLAYER_CLIENTS:
         for fmt in PREVIEW_FORMATS:
-            opts = _opts(cfg, {"format": fmt, "merge_output_format": "mp4", "progress_hooks": [hook],
-                               "outtmpl": str(Path(out_dir) / "preview.%(ext)s"),
-                               "concurrent_fragment_downloads": 4}, client)
+            def _preview_opts(browser_cfg):
+                return _opts(browser_cfg, {"format": fmt, "merge_output_format": "mp4",
+                                           "progress_hooks": [hook],
+                                           "outtmpl": str(Path(out_dir) / "preview.%(ext)s"),
+                                           "concurrent_fragment_downloads": 4}, client)
+
             try:
-                with yt_dlp.YoutubeDL(opts) as y:
+                with yt_dlp.YoutubeDL(_preview_opts(eff)) as y:
                     y.download([url])
                 if preview_file(out_dir):
                     _clear_intermediates(out_dir)
                     return
                 errors.append(RuntimeError("the preview file was not written"))
             except Exception as e:  # next format / client
+                if is_missing_browser_db(e) and _has_browser_cookies(eff):
+                    eff = _note_missing_browser_db(eff, e)
+                    try:
+                        with yt_dlp.YoutubeDL(_preview_opts(eff)) as y:
+                            y.download([url])
+                        if preview_file(out_dir):
+                            _clear_intermediates(out_dir)
+                            return
+                        errors.append(RuntimeError("the preview file was not written"))
+                    except Exception as e2:
+                        errors.append(e2)
+                        if is_blocked_error(e2):
+                            break  # this client is refused; other formats from it won't help
+                        continue
+                    continue
                 errors.append(e)
                 if is_blocked_error(e):
                     break  # this client is refused; other formats from it won't help
