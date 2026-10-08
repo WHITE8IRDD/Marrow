@@ -621,11 +621,13 @@ const projSig = list => JSON.stringify(list.map(p => [p.id, p.status, p.stage, p
 /* ---------- views ---------- */
 const main = $('#main');
 
-const Home = { probeId: null, timer: null, probeReady: false, probeFailed: false, info: null, url: '', objUrl: null };
+const Home = { probeId: null, timer: null, probeReady: false, probeFailed: false, info: null, url: '', objUrl: null,
+  last: null, done: false, infoReady: false, readyShown: false, localName: null };
+const FOUND_KEY = 'marrowFound';   // the fetched link + probe id, kept for the tab so a reload or a page switch doesn't refetch
+const LINK_RE = /^https?:\/\/[^\s/]+\.[^\s]+/i;
 function viewHome() {
   if (!state.opts) state.opts = state.settings ? state.settings.job_defaults : { clips: 5, duration: 45, platform: 'shorts', layout: 'crop', captions: true, use_llm: true, zoom: false, caption_style: { preset: 'bold-pop', overrides: {} } };
   const s = state.system;
-  resetFound();
   main.innerHTML = `
   ${s && !s.ffmpeg ? `<div class="banner bad">${ico('alert')}<div>FFmpeg wasn’t found, so clips can’t be rendered. Install it (Windows: <code>winget install ffmpeg</code>), open a new terminal and restart Marrow.</div></div>` : ''}
   <header class="page-head">
@@ -681,50 +683,111 @@ function viewHome() {
   setGenBtn();
   paintPlan();
   $('#findBtn').onclick = () => findVideo(($('#url')?.value || '').trim());
-  $('#url').addEventListener('input', e => { state.url = e.target.value; if (e.target.value) { clearPending(); resetFound(); } });
-  $('#url').addEventListener('keydown', e => { if (e.key === 'Enter') findVideo(e.target.value.trim()); });
+  const urlIn = $('#url');
+  urlIn.addEventListener('input', e => onUrlTyped(e.target.value));
+  urlIn.addEventListener('paste', () => { setTimeout(() => autoFind(urlIn.value), 0); });   // a pasted link is fetched at once
+  urlIn.addEventListener('keydown', e => { if (e.key === 'Enter') findVideo(e.target.value.trim()); });
   $('#genBtn').onclick = startProject;
   const box = $('#dropbox');
   ['dragenter', 'dragover'].forEach(ev => box.addEventListener(ev, e => { e.preventDefault(); box.classList.add('drag'); }));
   ['dragleave', 'drop'].forEach(ev => box.addEventListener(ev, e => { e.preventDefault(); box.classList.remove('drag'); }));
+  restoreFound();
 }
 function setGenBtn() {
   const pend = state.pending;
   const hasUrl = !!(Home.url || '').trim();
-  const ok = Home.probeReady || !!(pend && pend.upload) || (Home.probeFailed && hasUrl && !pend);
+  const ok = !!(pend && pend.upload) || Home.infoReady || Home.probeReady || (Home.probeFailed && hasUrl && !pend);
   const b = $('#genBtn'); if (b) b.disabled = !ok;
   const n = $('#genNote'); if (!n) return;
   n.textContent = !ok ? 'Find a video or upload one to unlock generation.'
     : (Home.probeFailed && !Home.probeReady && !pend) ? 'No preview, but Marrow can still fetch the full video when you generate.'
+    : (Home.infoReady && !Home.probeReady && !pend) ? 'Ready. The preview is still loading, but generating doesn’t need it.'
     : 'Ready. Adjust the settings, then generate.';
 }
 function resetFound() {
-  clearInterval(Home.timer); Home.timer = null;
-  Object.assign(Home, { probeId: null, probeReady: false, probeFailed: false, info: null, url: '' });
+  stopPolling();
+  Object.assign(Home, { probeId: null, probeReady: false, probeFailed: false, info: null, url: '',
+    last: null, done: false, infoReady: false, readyShown: false });
   const w = $('#foundWrap'); if (w) w.innerHTML = '';
-  setGenBtn(); repaintHomeCap();
+  saveFound(); setGenBtn(); repaintHomeCap();
+}
+function saveFound() {
+  try {
+    if (Home.probeId && Home.url) sessionStorage.setItem(FOUND_KEY, JSON.stringify({ url: Home.url, probeId: Home.probeId }));
+    else sessionStorage.removeItem(FOUND_KEY);
+  } catch (_) {}
+}
+function loadFound() {
+  try { return JSON.parse(sessionStorage.getItem(FOUND_KEY) || 'null'); } catch (_) { return null; }
+}
+function onUrlTyped(v) {
+  state.url = v;
+  if (v) clearPending();                                   // typing a link replaces a dropped file
+  if ((v || '').trim() !== Home.url) resetFound();         // a different link: drop the old card
+}
+// A pasted link is fetched straight away. Typed text waits for Enter or Find, so half-typed links aren't fetched.
+function autoFind(t) {
+  t = (t || '').trim();
+  if (LINK_RE.test(t)) findVideo(t);
+}
+function startPolling() {
+  if (Home.timer || !Home.probeId || Home.done) return;
+  Home.timer = setInterval(pollProbe, 800);
+  pollProbe();
+}
+function stopPolling() { clearInterval(Home.timer); Home.timer = null; }
+// Repaint the fetched video after a page switch (or a reload) instead of asking the user to fetch it again.
+function restoreFound() {
+  if (Home.localName && Home.objUrl) { paintLocalCard(); return; }
+  if (!Home.probeId) { setGenBtn(); return; }
+  if (Home.last) paintProbe(Home.last); else setFoundState('fetching');
+  setGenBtn();
+  startPolling();
 }
 async function findVideo(url) {
   if (!url) { toast('Paste a video link first.', 'bad'); return; }
+  if (Home.url === url && !Home.probeFailed) { startPolling(); return; }   // already fetched, or fetching now
   clearPending(); resetFound();
-  Home.url = url;
+  Home.url = url; state.url = url;
   setFoundState('fetching');
   try {
     const r = await api('/api/probe', { method: 'POST', body: { url } });
     if (Home.url !== url) return;                  // the link was changed while we waited
-    Home.probeId = r.id;
-    Home.timer = setInterval(pollProbe, 800);
-  } catch (e) { setFoundState('error', e.message); }
+    Home.probeId = r.id; saveFound(); startPolling();
+  } catch (e) { if (Home.url === url) setFoundState('error', e.message); }
 }
 async function pollProbe() {
   const id = Home.probeId; if (!id) return;
   let p;
   try { p = await (await fetch('/api/probe/' + id)).json(); } catch (_) { return; }
   if (Home.probeId !== id) return;
-  if (p.info && !Home.info) { Home.info = p.info; paintFoundCard(p); }
-  if (p.state === 'error') { clearInterval(Home.timer); setFoundState('error', p.error); return; }
-  if (p.state === 'preview') { const el = $('#foundProg'); if (el) el.textContent = `Preparing preview · ${Math.round((p.progress || 0) * 100)}%`; }
-  if (p.state === 'ready') { clearInterval(Home.timer); setFoundReady(p); }
+  if (!p.state) {                                  // the server no longer knows this fetch (restart or expiry)
+    stopPolling(); Home.probeId = null; Home.last = null; saveFound();
+    setFoundState('error', 'The fetch expired. Press Find video again.');
+    return;
+  }
+  Home.last = p;
+  if (p.info) Home.info = p.info;
+  Home.infoReady = !!p.info && p.state !== 'error' && p.state !== 'cancelled';
+  Home.probeReady = p.state === 'ready';
+  paintProbe(p);
+  if (p.state === 'ready' || p.state === 'error' || p.state === 'cancelled') { Home.done = true; stopPolling(); }
+  setGenBtn();
+}
+// Paints the found card for a probe payload. Only (re)builds the card when it isn't on screen,
+// so the preview video isn't reloaded on every poll.
+function paintProbe(p) {
+  const w = $('#foundWrap'); if (!w) return;
+  if (p.state === 'error' && !p.info) { setFoundState('error', p.error); return; }
+  if (!p.info) { if (!w.querySelector('.found-skel')) setFoundState('fetching'); return; }
+  if (!w.querySelector('#foundMedia')) { Home.readyShown = false; paintFoundCard(p); }
+  if (p.state === 'ready') {
+    if (!Home.readyShown) { Home.readyShown = true; setFoundReady(p); }
+  } else if (p.state !== 'error') {
+    const el = $('#foundProg');
+    if (el) el.textContent = p.state === 'preview' ? `Preparing preview · ${Math.round((p.progress || 0) * 100)}%` : 'Preparing preview…';
+  }
+  if (p.state === 'error') setFoundState('error', p.error);
 }
 function friendlyProbeError(msg) {
   const m = String(msg || '');
@@ -771,7 +834,6 @@ function paintFoundCard(p) {
     </div></div>`;
 }
 function setFoundReady(p) {
-  if (!Home.info) { Home.info = p.info || {}; paintFoundCard(p); }
   Home.probeReady = true;
   const media = $('#foundMedia');
   if (media && p.preview) media.innerHTML = `<video src="${p.preview}" controls muted playsinline preload="metadata"></video><span class="chip found-chip">${ico('check')}Preview ready</span>`;
@@ -801,6 +863,7 @@ function clearPending() {
     if (pv && (pv.getAttribute('src') || '').startsWith('blob:')) { pv.removeAttribute('src'); pv.load(); }
     URL.revokeObjectURL(Home.objUrl); Home.objUrl = null;
   }
+  Home.localName = null;
 }
 function paintRecent() {
   const r = $('#recent'); if (!r) return;
@@ -809,24 +872,29 @@ function paintRecent() {
   r.innerHTML = list.length ? `<div class="pgrid compact">${list.map(p => projectCard(p, false)).join('')}</div>`
     : `<div class="empty">${ico('film')}<div><b>No projects yet</b><span class="hint">Paste a link above or drop a video to make your first clips.</span></div></div>`;
 }
+function paintLocalCard() {
+  const w = $('#foundWrap'); if (!w || !Home.objUrl) return;
+  const dur = Home.info?.duration;
+  w.innerHTML = `<div class="found">
+    <div class="found-media" id="foundMedia"><video src="${Home.objUrl}" controls muted playsinline preload="metadata"></video><span class="chip found-chip">${ico('check')}Local file</span></div>
+    <div class="found-meta">
+      <h3 class="found-title" dir="auto">${esc(Home.localName)}</h3>
+      <div class="cmeta" id="up-meta">${dur ? `Local file · ${fmtT(dur)}` : 'Reading duration…'}</div>
+      <div class="found-prog">Uploads are used directly, so nothing is downloaded.</div>
+      <div class="found-actions"><button class="btn ghost sm" data-act="clear-source">${ico('x')}Remove</button></div>
+    </div></div>`;
+  const pv = $('#homePrev'); if (pv) { pv.src = Home.objUrl; pv.play().catch(() => {}); }
+  const note = $('#homePrevNote'); if (note) note.hidden = true;
+}
 function handleFile(file) {
   if (!/\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(file.name)) { toast('Unsupported file type. Use mp4, mov, mkv, webm, avi or m4v.', 'bad'); return; }
   state.url = ''; const u = $('#url'); if (u) u.value = '';
   resetFound();
   if (Home.objUrl) URL.revokeObjectURL(Home.objUrl);
   Home.objUrl = URL.createObjectURL(file);
+  Home.localName = file.name;
   Home.info = { title: file.name, duration: null };
-  const w = $('#foundWrap');
-  if (w) w.innerHTML = `<div class="found">
-    <div class="found-media" id="foundMedia"><video src="${Home.objUrl}" controls muted playsinline preload="metadata"></video><span class="chip found-chip">${ico('check')}Local file</span></div>
-    <div class="found-meta">
-      <h3 class="found-title" dir="auto">${esc(file.name)}</h3>
-      <div class="cmeta" id="up-meta">Reading duration…</div>
-      <div class="found-prog">Uploads are used directly, so nothing is downloaded.</div>
-      <div class="found-actions"><button class="btn ghost sm" data-act="clear-source">${ico('x')}Remove</button></div>
-    </div></div>`;
-  const pv = $('#homePrev'); if (pv) { pv.src = Home.objUrl; pv.play().catch(() => {}); }
-  const note = $('#homePrevNote'); if (note) note.hidden = true;
+  paintLocalCard();
   const probe = document.createElement('video'); probe.preload = 'metadata'; probe.src = Home.objUrl;
   probe.onloadedmetadata = () => {
     Home.info = { title: file.name, duration: probe.duration };
@@ -857,9 +925,9 @@ async function startProject() {
     try { Notification.requestPermission(); } catch (_) {}
   }
   if (pend && !pend.upload) { toast('Wait for the upload to finish.'); return; }
-  const useUrl = !pend && !Home.probeReady && Home.probeFailed && !!Home.url;
+  const useUrl = !pend && Home.probeFailed && !!Home.url;
   if (!pend && !useUrl && !Home.probeId) { toast('Find a video or upload a file first.', 'bad'); return; }
-  if (!pend && !useUrl && !Home.probeReady) { toast('Wait for the video preview to finish loading.'); return; }
+  if (!pend && !useUrl && !Home.infoReady && !Home.probeReady) { toast('Still reading the video. It will be ready in a moment.'); return; }
   const settings = readHomeOpts(); state.opts = settings;
   const btn = $('#genBtn'); if (btn) btn.disabled = true;
   try {
@@ -2209,6 +2277,7 @@ function parseRoute() {
 async function render() {
   const t0 = performance.now();
   state.route = parseRoute(); closeModal(); renderSide();
+  if (state.route.name !== 'home') stopPolling();          // the fetched video is kept and repainted on return
   try {
     if (state.route.name === 'home') viewHome();
     else if (state.route.name === 'projects') viewProjects();
@@ -2251,6 +2320,8 @@ setInterval(() => { if (document.hidden) return; if (hasActive()) refresh(); }, 
 setInterval(() => { if (!document.hidden && !hasActive()) refresh(); }, 15000);
 (async function init() {
   state.route = parseRoute();
+  const saved = loadFound();
+  if (saved && saved.url && saved.probeId) { Home.url = saved.url; Home.probeId = saved.probeId; state.url = saved.url; }
   const [p, s, sys] = await Promise.allSettled([api('/api/projects'), api('/api/settings'), api('/api/system')]);
   if (p.status === 'fulfilled') state.projects = p.value.projects;
   if (s.status === 'fulfilled') state.settings = s.value;
