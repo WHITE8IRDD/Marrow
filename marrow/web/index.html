@@ -40,6 +40,7 @@
   --shadow:0 6px 24px rgba(20,20,40,.08); --glass:rgba(255,255,255,.72);
 } }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
   font:14px/1.5 Inter,"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
 a{color:inherit;text-decoration:none}
@@ -442,6 +443,23 @@ input[type=range]{accent-color:var(--accent)}
 .wtl{position:relative;height:44px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);overflow:hidden;touch-action:none}
 .tlb{position:absolute;top:6px;bottom:6px;border-radius:6px;background:var(--accent-soft);border:1px solid var(--accent);cursor:grab;min-width:8px}
 .tlb:active{cursor:grabbing}
+/* edits workspace */
+.edwrap{display:grid;gap:12px}
+.edtop{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.edtop select{min-width:180px}
+#ed-dirty{color:var(--warn);border-color:var(--warn)}
+.edmain{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:14px;align-items:start}
+@media(max-width:1000px){.edmain{grid-template-columns:1fr}}
+.edcenter{display:grid;gap:10px;justify-items:center}
+.edcenter .livewrap{width:min(320px,100%);aspect-ratio:9/16;background:#000;border-radius:18px;overflow:hidden}
+.edcenter video{width:100%;height:100%;object-fit:contain;display:block}
+.edside{display:grid;gap:12px;min-width:0}
+.edtime{position:relative;border-radius:14px;background:var(--panel);border:1px solid var(--line);padding:10px;display:grid;gap:8px}
+.edwave{position:relative}
+#edx-wave{width:100%;height:64px;display:block}
+#edx-play{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 8px #fff;pointer-events:none}
+.edshots{display:flex;gap:6px;flex-wrap:wrap}
+.edshots .shot{padding:4px 10px;border-radius:99px;background:var(--panel2);border:1px solid var(--line2);font-size:11.5px}
 .viewer{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.88);display:grid;place-items:center}
 .viewer[hidden]{display:none}
 .vbox{position:relative;height:min(88vh,900px);aspect-ratio:9/16;border-radius:22px;overflow:hidden;background:#000}
@@ -1337,23 +1355,6 @@ function cardEl(p, c, sig) {
   return el;
 }
 function clipOf(btn) { const el = btn.closest('.tile,.clip'); const p = curProject(); return { el, p, c: p.clips.find(x => String(x.rank) === el.dataset.rank) }; }
-/* edits workspace */
-.edwrap{display:grid;gap:12px}
-.edtop{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.edtop select{min-width:180px}
-#ed-dirty{color:var(--warn);border-color:var(--warn)}
-.edmain{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:14px;align-items:start}
-@media(max-width:1000px){.edmain{grid-template-columns:1fr}}
-.edcenter{display:grid;gap:10px;justify-items:center}
-.edcenter .livewrap{width:min(320px,100%);aspect-ratio:9/16;background:#000;border-radius:18px;overflow:hidden}
-.edcenter video{width:100%;height:100%;object-fit:contain;display:block}
-.edside{display:grid;gap:12px;min-width:0}
-.edtime{position:relative;border-radius:14px;background:var(--panel);border:1px solid var(--line);padding:10px;display:grid;gap:8px}
-.edwave{position:relative}
-#edx-wave{width:100%;height:64px;display:block}
-#edx-play{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 8px #fff;pointer-events:none}
-.edshots{display:flex;gap:6px;flex-wrap:wrap}
-.edshots .shot{padding:4px 10px;border-radius:99px;background:var(--panel2);border:1px solid var(--line2);font-size:11.5px}
 /* ---------- fullscreen viewer ---------- */
 const Viewer = (() => {
   let el, list = [], i = 0;
@@ -1898,6 +1899,7 @@ function viewEdits() {
     v.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * v.duration;
   });
   document.addEventListener('keydown', edxKeys);
+  edxDirty(false);
   if (projs.length) edxSelect(projs[0].id, projs[0].clips[0].rank);
 }
 function edxProject() { return state.projects.find(x => x.id === Edits.pid); }
@@ -2273,20 +2275,25 @@ function parseRoute() {
 async function render() {
   const t0 = performance.now();
   state.route = parseRoute(); closeModal(); renderSide();
-  if (state.route.name === 'home') viewHome();
-  else if (state.route.name === 'projects') viewProjects();
-  else if (state.route.name === 'project') viewProject();
-  else if (state.route.name === 'edits') viewEdits();
-  else if (state.route.name === 'settings') {
-    if (state.settings && state.system) {
-      viewSettings();   // instant from cache, then revalidate in parallel
-      Promise.allSettled([refreshSystem(), api('/api/settings').then(s => { state.settings = s; })])
-        .then(() => { if (state.route.name === 'settings') viewSettings(); });
-    } else {
-      await refreshSystem();
-      try { state.settings = await api('/api/settings'); } catch (e) { toast(e.message, 'bad'); return; }
-      if (state.route.name === 'settings') viewSettings();
+  try {
+    if (state.route.name === 'home') viewHome();
+    else if (state.route.name === 'projects') viewProjects();
+    else if (state.route.name === 'project') viewProject();
+    else if (state.route.name === 'edits') viewEdits();
+    else if (state.route.name === 'settings') {
+      if (state.settings && state.system) {
+        viewSettings();   // instant from cache, then revalidate in parallel
+        Promise.allSettled([refreshSystem(), api('/api/settings').then(s => { state.settings = s; })])
+          .then(() => { if (state.route.name === 'settings') viewSettings(); });
+      } else {
+        await refreshSystem();
+        try { state.settings = await api('/api/settings'); } catch (e) { toast(e.message, 'bad'); return; }
+        if (state.route.name === 'settings') viewSettings();
+      }
     }
+  } catch (e) {
+    console.error(e);
+    main.innerHTML = `<div class="empty">This view failed to render.<br><span class="note">${esc(e.message || e)}</span><br><br><a class="btn sm" href="#/">Back to Home</a></div>`;
   }
   window.scrollTo(0, 0);
   console.debug(`[perf] route ${state.route.name}: ${Math.round(performance.now() - t0)} ms`);
