@@ -1,11 +1,13 @@
 # Marrow configuration. Any key you omit falls back to the built-in default.
 
 whisper:
-  model: small                 # tiny, base, small, medium, large-v3
+  model: auto                 # auto (recommended), large-v3-turbo, distil-large-v3, large-v3, medium, small
   device: auto                 # auto, cuda, cpu
   compute_type: int8_float16   # int8_float16 is safe on GTX 16xx; try float16 on RTX cards
-  language: null               # null = auto-detect, or e.g. "en"
-  beam_size: 5
+  language: null               # null = auto-detect, or e.g. "en", "ar"
+  beam_size: 1                 # 1 is ~2-3x faster than 5 for tiny accuracy gain
+  batch_size: 8                # parallel chunks on GPU (halved automatically on OOM)
+  quality: fast                # fast or best (model picked automatically in auto mode)
 
 llm:
   enabled: true
@@ -28,7 +30,7 @@ clip:
 
 render:
   layout: crop                 # crop (center crop) or blur_fit (full frame over blurred background)
-  encoder: libx264             # libx264 or h264_nvenc (NVIDIA hardware encoder)
+  encoder: auto                # auto (NVENC if available, else libx264), libx264 or h264_nvenc
   preset: fast                 # libx264 preset
   crf: 20                      # quality (lower = better); also used as -cq for nvenc
   fps: 30
@@ -36,6 +38,7 @@ render:
 
 captions:
   enabled: true
+  preset: bold-pop             # default caption style (see the style picker in the UI)
   font: Arial                  # install a bold font like Montserrat ExtraBold for a better look
   bold: true
   font_size: 72

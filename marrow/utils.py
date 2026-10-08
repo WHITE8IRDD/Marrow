@@ -14,7 +14,7 @@ def ensure_dir(path) -> Path:
 
 
 def slugify(text: str) -> str:
-    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_")
+    slug = re.sub(r"[^\w.\-]+", "_", text).strip("_")
     return slug[:80] or "video"
 
 
@@ -40,7 +40,8 @@ def require_ffmpeg():
 def run_ffmpeg(args, cwd=None):
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"] + [str(a) for a in args]
     try:
-        return subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=cwd)
+        return subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=cwd,
+                              encoding="utf-8", errors="replace")
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"ffmpeg failed:\n{e.stderr}") from e
 
@@ -49,6 +50,6 @@ def probe_duration(path) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     return float(out.stdout.strip())

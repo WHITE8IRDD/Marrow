@@ -1,5 +1,7 @@
 import argparse
 import logging
+import os
+import sys
 
 from .pipeline import run_pipeline
 
@@ -21,6 +23,11 @@ def main(argv=None):
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
+    os.environ.setdefault("PYTHONUTF8", "1")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(message)s")
 
     results = run_pipeline(

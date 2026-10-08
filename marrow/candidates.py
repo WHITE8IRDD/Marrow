@@ -5,8 +5,23 @@ import numpy as np
 
 from .models import Candidate, Sentence
 
-END_PUNCT = (".", "?", "!", "…")
+END_PUNCT = (".", "?", "!", "…", "؟")
 TRAILING_QUOTES = "\"'”’)"
+
+AR_DIACRITICS = re.compile(r"[ً-ٟـ]")
+AR_HOOK_RE = re.compile(
+    r"^(هل|كيف|لماذا|ماذا|ما|من|متى|أين|السر|الحقيقة|لن تصدق|أهم|أخطر|خطأ|احذر|توقف|تخيل|شاهد)\b"
+)
+AR_KEYWORDS = (
+    "السر", "الحقيقة", "لن تصدق", "أهم", "مذهل", "لا يصدق", "مجانا", "حصري",
+    "عاجل", "أفضل", "أسوأ", "خطير", "مهم", "خطأ", "فضيحة", "صادم",
+)
+AR_KW_RE = re.compile(r"\b(" + "|".join(re.escape(k) for k in AR_KEYWORDS) + r")\b")
+
+
+def normalize_ar(text: str) -> str:
+    text = AR_DIACRITICS.sub("", text)
+    return text.translate(str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي"}))
 
 CONJ_START = {"and", "but", "so", "because", "which", "that", "or", "then", "also", "cause", "plus"}
 
@@ -75,14 +90,17 @@ def hook_score(first_sentence: str) -> float:
     s = 0.2
     if HOOK_RE.match(first_sentence.strip()):
         s += 0.5
-    if "?" in first_sentence:
+    if AR_HOOK_RE.match(normalize_ar(first_sentence).strip()):
+        s += 0.5
+    if "?" in first_sentence or "؟" in first_sentence:
         s += 0.3
     return min(1.0, s)
 
 
 def keyword_score(text: str) -> float:
     hits = {m.lower() for m in KW_RE.findall(text)}
-    return min(len(hits) / 3.0, 1.0)
+    ar_hits = set(AR_KW_RE.findall(normalize_ar(text)))
+    return min((len(hits) + len(ar_hits)) / 3.0, 1.0)
 
 
 def score_candidate(c: Candidate) -> float:

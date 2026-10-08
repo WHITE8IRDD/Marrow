@@ -6,13 +6,35 @@
 <title>Marrow</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236d5efc'/%3E%3Cstop offset='1' stop-color='%23c04bff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M8 23V9l8 9 8-9v14' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
-:root{
-  --bg:#09090d; --panel:#111118; --panel2:#17171f; --line:#23232e; --line2:#2e2e3b;
-  --text:#ededf4; --muted:#8c8c9f; --dim:#62627a;
-  --a1:#6d5efc; --a2:#b455f7; --grad:linear-gradient(135deg,#6d5efc 0%,#b455f7 100%);
-  --ok:#27d17f; --warn:#f5b73b; --bad:#ff5d6c; --info:#58a6ff;
-  --r:14px;
+:root{                                   /* DARK: iOS black + system greys */
+  --bg:#000; --bg2:#0b0b0d; --panel:#1c1c1e; --panel2:#2c2c2e;
+  --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.14);
+  --text:#f5f5f7; --muted:#98989f; --dim:#636366;
+  --accent:#8b7bff; --accent-text:#fff;
+  --a1:#7c6cff; --a2:#a78bfa; --grad:linear-gradient(135deg,#7c6cff,#a78bfa);
+  --ok:#30d158; --warn:#ff9f0a; --bad:#ff453a; --info:#58a6ff;
+  --r:24px; --r-card:24px; --r-ctl:999px; --ease:cubic-bezier(.32,.72,0,1);
+  --shadow:0 8px 30px rgba(0,0,0,.45); --glass:rgba(28,28,30,.72);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","Inter","Segoe UI","Noto Sans Arabic",system-ui,sans-serif;
 }
+:root[data-theme="light"]{               /* LIGHT: OpusClip-style white */
+  --bg:#f5f5f7; --bg2:#fff; --panel:#fff; --panel2:#f2f2f7;
+  --line:rgba(0,0,0,.07); --line2:rgba(0,0,0,.12);
+  --text:#111114; --muted:#6b6b76; --dim:#9a9aa5;
+  --accent:#5b3df5; --accent-text:#fff;
+  --a1:#5b3df5; --a2:#8a63ff; --grad:linear-gradient(135deg,#5b3df5,#8a63ff);
+  --ok:#1f9d43; --warn:#b25a00; --bad:#d70015; --info:#0366d6;
+  --shadow:0 6px 24px rgba(20,20,40,.08); --glass:rgba(255,255,255,.72);
+}
+@media (prefers-color-scheme:light){ :root:not([data-theme="dark"]){
+  --bg:#f5f5f7; --bg2:#fff; --panel:#fff; --panel2:#f2f2f7;
+  --line:rgba(0,0,0,.07); --line2:rgba(0,0,0,.12);
+  --text:#111114; --muted:#6b6b76; --dim:#9a9aa5;
+  --accent:#5b3df5; --accent-text:#fff;
+  --a1:#5b3df5; --a2:#8a63ff; --grad:linear-gradient(135deg,#5b3df5,#8a63ff);
+  --ok:#1f9d43; --warn:#b25a00; --bad:#d70015; --info:#0366d6;
+  --shadow:0 6px 24px rgba(20,20,40,.08); --glass:rgba(255,255,255,.72);
+} }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
   font:14px/1.5 Inter,"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
@@ -200,6 +222,113 @@ input[type=color]{width:44px;height:34px;border:1px solid var(--line2);border-ra
   .optcard .optbody,.form,.edgrid{grid-template-columns:1fr}
   .urlrow{flex-direction:column}
 }
+/* ===== Marrow redesign: iOS pill system (appended; wins over the base above) ===== */
+html,body{background:var(--bg);color:var(--text);
+  font:14px/1.5 var(--font);letter-spacing:-.01em}
+.side{margin:12px;border-radius:28px;background:var(--glass);backdrop-filter:blur(24px) saturate(180%);
+  border:1px solid var(--line);box-shadow:var(--shadow);height:calc(100vh - 24px)}
+.nav a{border-radius:999px;padding:10px 16px;transition:background .25s var(--ease)}
+.nav a.on{background:var(--panel2);color:var(--text);box-shadow:none}
+.card,.optcard,.pcard,.clip,.modal,.engine,.status{background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r-card);box-shadow:var(--shadow)}
+.btn{min-height:40px;padding:0 18px;border-radius:var(--r-ctl);font-weight:600;
+  transition:transform .2s var(--ease),background .2s,filter .15s}
+.btn:active{transform:scale(.96)}
+.btn.primary{background:var(--text);color:var(--bg);border-color:transparent;box-shadow:none}
+.btn.accent{background:var(--grad);color:var(--accent-text);border-color:transparent}
+.btn.sm{min-height:32px;padding:0 14px} .btn.lg{min-height:52px;padding:0 28px}
+.btn.danger{background:#ff453a1f;color:#ff453a;border-color:transparent}
+input[type=text],input[type=number],input.txt,select{min-height:48px;border-radius:var(--r-ctl);
+  background:var(--panel2);border:1px solid transparent;padding:0 18px}
+.urlrow{border-radius:999px;padding:6px;background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow)}
+.urlrow input[type=text]{background:transparent;border:0;min-height:44px}
+.seg{display:inline-flex;padding:3px;border-radius:999px;background:var(--panel2);border:0}
+.seg button{border-radius:999px}
+.seg button.on{background:var(--panel);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.25)}
+input[type=range]{accent-color:var(--accent)}
+.pill{border-radius:999px;border:0;font-weight:600}
+.pbar{border-radius:99px;background:var(--line2)}
+.hero h1{font-weight:800;letter-spacing:-.04em;font-size:clamp(34px,5vw,56px)}
+.eyebrow{color:var(--accent)}
+.modal{border-radius:28px} .backdrop{background:rgba(0,0,0,.45);backdrop-filter:blur(8px)}
+.themebtn{margin-top:8px;width:100%}
+/* hardware panel */
+.hw{display:grid;gap:10px;padding:14px 16px;border-radius:20px;background:var(--panel);border:1px solid var(--line)}
+.hw-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-weight:600;font-size:13px}
+.chip{border-radius:999px;padding:3px 10px;font-size:11px;font-weight:700;letter-spacing:.4px}
+.chip.gpu{background:#30d15822;color:#30d158}.chip.cpu{background:#ff9f0a22;color:#ff9f0a}
+.hw-row{display:grid;grid-template-columns:92px 1fr 118px;align-items:center;gap:10px;font-size:12px;color:var(--muted)}
+.hw-bar{height:8px;border-radius:99px;background:var(--line2);overflow:hidden}
+.hw-bar>i{display:block;height:100%;border-radius:99px;background:var(--accent);transition:width .6s cubic-bezier(.32,.72,0,1)}
+.hw-warn{font-size:12px;color:#ff9f0a;background:#ff9f0a14;border-radius:12px;padding:8px 10px}
+.hw-row b{color:var(--text);font-weight:600;text-align:right}
+/* caption style picker */
+.styles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.scard{container-type:inline-size;position:relative;aspect-ratio:3/4;border-radius:22px;overflow:hidden;cursor:pointer;
+  background:linear-gradient(160deg,#4a4a52,#1a1a1d);border:2px solid transparent;transition:transform .2s cubic-bezier(.32,.72,0,1)}
+.scard:hover{transform:translateY(-2px)}.scard.sel{border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 25%,transparent)}
+.scard .cap{position:absolute;left:6%;right:6%;text-align:center;line-height:1.25}
+.scard .w{display:inline-block;margin:0 .1em;transition:transform .12s}
+.scard .name{position:absolute;left:10px;top:10px;font:600 11px var(--font);padding:3px 9px;border-radius:99px;background:#0008;color:#fff}
+.capprev{border-radius:24px;max-width:240px;box-shadow:0 10px 40px #0005}
+/* live analysis scan panel (always dark: it is a screen) */
+.scan{border-radius:24px;background:#0b0b0e;border:1px solid var(--line);padding:16px;color:#e8e8ee;display:grid;gap:12px}
+.scan-head{display:flex;justify-content:space-between;align-items:center}
+.stage{position:relative;aspect-ratio:16/9;border-radius:18px;overflow:hidden;background:#000;border:1px solid rgba(255,255,255,.08);
+  transition:box-shadow .9s var(--ease),border-color .9s}
+.stage video{width:100%;height:100%;object-fit:cover;display:block;transition:filter .9s var(--ease)}
+.scan[data-state=scanning] video{filter:grayscale(1) brightness(.42) contrast(1.15)}
+.scan[data-state=live] .stage{border:1.5px solid var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 36px color-mix(in srgb,var(--accent) 40%,transparent)}
+.grid{position:absolute;inset:0;opacity:.12;background:
+  linear-gradient(rgba(255,255,255,.5) 1px,transparent 1px) 0 0/100% 48px,linear-gradient(90deg,rgba(255,255,255,.5) 1px,transparent 1px) 0 0/48px 100%}
+.vline{position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.35);animation:drift 7s ease-in-out infinite alternate}
+.vline.v1{left:22%}.vline.v2{left:61%;animation-duration:9s;animation-direction:alternate-reverse}
+@keyframes drift{from{transform:translateX(-90px)}to{transform:translateX(90px)}}
+.hline{position:absolute;left:0;right:0;height:2px;top:0;background:linear-gradient(90deg,transparent,var(--accent),transparent);
+  box-shadow:0 0 18px 3px color-mix(in srgb,var(--accent) 70%,transparent);animation:sweep 2.8s linear infinite}
+@keyframes sweep{from{top:-2%}to{top:102%}}
+.reticle{position:absolute;width:44px;height:44px;border-radius:50%;border:1px solid rgba(255,255,255,.55);left:50%;top:50%;
+  transform:translate(-50%,-50%);transition:left .9s var(--ease),top .9s var(--ease)}
+.reticle::after{content:"";position:absolute;inset:50% auto auto 50%;width:4px;height:4px;margin:-2px;border-radius:50%;background:#fff}
+.schip{position:absolute;display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;background:rgba(10,12,24,.72);
+  border:1px solid rgba(120,140,255,.25);backdrop-filter:blur(8px);font:600 10.5px ui-monospace,"Cascadia Mono",Consolas,monospace;letter-spacing:.8px;color:#8fa2ff}
+.schip.tl{top:12px;left:12px}.schip.tr{top:12px;right:12px;color:#aab}
+.schip.live{top:12px;right:12px;background:#e5222f;border-color:transparent;color:#fff;display:none}
+.schip.live i{width:7px;height:7px;border-radius:50%;background:#fff;animation:pulse 1s infinite}
+.scan[data-state=live] .schip.live{display:flex}.scan[data-state=live] .schip.tr,
+.scan[data-state=live] .hline,.scan[data-state=live] .vline,.scan[data-state=live] .grid,
+.scan[data-state=live] .reticle,.scan[data-state=live] .schip.tl{display:none}
+.mono.bl{position:absolute;left:12px;bottom:10px;font:10.5px/1.6 ui-monospace,"Cascadia Mono",Consolas,monospace;color:#6f7bd8}
+.mono b{color:#8fa2ff;font-weight:600}.scan[data-state=live] .mono{display:none}
+.strip{position:relative;height:46px;border-radius:12px;overflow:hidden;background:#15151a}
+.strip img{width:100%;height:100%;object-fit:cover;opacity:.75}.strip .marks i{position:absolute;top:0;bottom:0;border-radius:4px}
+.strip .head{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 8px #fff;transition:left .6s linear}
+.logs summary{cursor:pointer;color:#9a9aa8;font-weight:600;font-size:12.5px;list-style:none;margin-bottom:8px}
+.logbody{max-height:190px;overflow:auto;font:11.5px/1.7 ui-monospace,"Cascadia Mono",Consolas,monospace;color:#8b8b99;border-radius:14px;
+  background:#0f0f14;padding:10px 12px}.logbody div{unicode-bidi:plaintext;animation:fadein .35s}
+@keyframes fadein{from{opacity:0;transform:translateY(3px)}}
+/* dashboard + progressive clip cards */
+.dash{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:1000px){.dash{grid-template-columns:1fr}}
+.shorts{display:grid;gap:14px}
+.sc{display:grid;grid-template-columns:150px 1fr;gap:14px;padding:12px;border-radius:22px;background:var(--panel);border:1px solid var(--line)}
+.sc .vid{position:relative;aspect-ratio:9/16;border-radius:16px;overflow:hidden;background:#000}
+.sc .vid video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+.sc.rendering .vid::after{content:"AI MAGIC IN PROGRESS...";position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:10px;
+  font:700 10px ui-monospace,Consolas,monospace;letter-spacing:1px;color:#fff;background:rgba(20,20,26,.55);backdrop-filter:blur(10px) grayscale(1)}
+.sc.rendering .vid{animation:shimmer 1.4s infinite linear;background:linear-gradient(110deg,#1c1c1e 30%,#2c2c2e 50%,#1c1c1e 70%);background-size:200% 100%}
+@keyframes shimmer{to{background-position:-200% 0}}
+.sc .blk{border-radius:12px;background:var(--panel2);padding:8px 10px;font-size:12px;position:relative}
+.sc .blk small{display:block;color:var(--dim);font:700 9.5px var(--font);letter-spacing:.8px;margin-bottom:3px}
+.sc .acts{display:flex;gap:8px;flex-wrap:wrap}
+.btn.edit{background:#7c3aed;color:#fff;border-color:transparent}
+.btn.subs{background:linear-gradient(135deg,#ff9f0a,#ff7a00);color:#fff;border-color:transparent}
+/* live caption overlay in edit modal */
+.livewrap{container-type:inline-size}
+.cap-live{position:absolute;left:8%;right:8%;bottom:14%;text-align:center;line-height:1.3;pointer-events:none}
+.cap-live span{margin:0 .12em}
+.cap-live span.on{color:var(--accent)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
@@ -211,6 +340,7 @@ input[type=color]{width:44px;height:34px;border:1px solid var(--line2);border-ra
       <a href="#/projects" data-r="projects"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projects<span class="count" id="navcount" hidden></span></a>
       <a href="#/settings" data-r="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</a>
     </nav>
+    <button class="btn ghost sm themebtn" id="themeBtn" title="Toggle light / dark theme">🌙 Theme</button>
     <div class="engine" id="engine" onclick="location.hash='#/settings'" title="Open settings"></div>
   </aside>
   <main id="main"></main>
@@ -220,6 +350,12 @@ input[type=color]{width:44px;height:34px;border:1px solid var(--line2);border-ra
 
 <script>
 'use strict';
+const setTheme = t => { document.documentElement.dataset.theme = t; try { localStorage.setItem('theme', t); } catch (_) {} };
+try { setTheme(localStorage.getItem('theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')); }
+catch (_) { setTheme('dark'); }
+document.getElementById('themeBtn').addEventListener('click', () => {
+  setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+});
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -258,7 +394,7 @@ function openModal(html, wide) {
   b.addEventListener('mousedown', e => { if (e.target === b) closeModal(); });
   $('#modal-root').appendChild(b); return b.firstChild;
 }
-function closeModal() { const r = $('#modal-root'); const v = $('video', r); if (v) v.pause(); r.innerHTML = ''; }
+function closeModal() { const r = $('#modal-root'); const v = $('video', r); if (v) v.pause(); r.innerHTML = ''; editCtx = null; }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 function confirmBox({ title, text, ok = 'Confirm', danger = false, check = null }) {
   return new Promise(res => {
@@ -275,9 +411,11 @@ const seg = (key, items, val) => `<div class="seg" data-opt="${key}">${items.map
   `<button type="button" class="${v === val ? 'on' : ''}" data-v="${v}" data-act="seg">${l}</button>`).join('')}</div>`;
 const tog = (key, label, on, hint) => `<label class="tog"><input type="checkbox" data-opt="${key}" ${on ? 'checked' : ''}><span class="knob"></span><span class="tl">${label}${hint ? `<small>${hint}</small>` : ''}</span></label>`;
 function optsPanel(o) {
-  const cs = o.caption_style;
+  const cs = o.caption_style || { preset: 'bold-pop', overrides: {} };
+  const ov = cs.overrides || {};
   const llmWarn = state.system && !(state.system.ollama.reachable && state.system.ollama.model_ready)
     ? (state.system.ollama.reachable ? `Model "${esc(state.system.ollama.model)}" isn't pulled yet. Clips will be ranked by audio and heuristics.` : 'Ollama isn\'t running. Clips will be ranked by audio and heuristics.') : 'Uses your local Ollama model to judge hook, payoff and clarity';
+  const pos = ov.position || 'lower';
   return `<div class="optbody">
     <div class="field"><span class="fl">Output format</span>${seg('platform', [['shorts', 'YouTube Shorts'], ['reels', 'Facebook Reels'], ['both', 'Both']], o.platform)}</div>
     <div class="field"><span class="fl">Framing</span>${seg('layout', [['crop', 'Center crop'], ['blur_fit', 'Blur fit']], o.layout)}</div>
@@ -286,25 +424,149 @@ function optsPanel(o) {
     <div class="field">${tog('captions', 'Animated captions', o.captions, 'Burn word-by-word captions into the video')}</div>
     <div class="field">${tog('use_llm', 'AI clip scoring', o.use_llm, llmWarn)}</div>
     <div class="field">${tog('zoom', 'Slow zoom', o.zoom, 'Subtle push-in (center crop only, slower)')}</div>
-    <div class="field">${tog('uppercase', 'Uppercase captions', cs.uppercase)}</div>
-    <div class="field full"><span class="fl">Caption colors &amp; size</span><div class="colors">
-      <label><input type="color" data-opt="highlight_color" value="${cs.highlight_color}">Active word</label>
-      <label><input type="color" data-opt="text_color" value="${cs.text_color}">Other words</label>
-      <label style="flex:1;min-width:180px">Size<input type="range" min="40" max="110" data-opt="font_size" data-unit="" value="${cs.font_size}"><output>${cs.font_size}</output></label>
-    </div></div></div>`;
+    <div class="field full"><span class="fl">Caption style</span>
+      <input type="hidden" class="stylePreset" value="${esc(cs.preset || 'bold-pop')}">
+      <div class="seg sampleLang"><button type="button" data-l="en" class="on">English</button><button type="button" data-l="ar">العربية</button></div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
+        <div class="styles styleGrid" style="flex:1;min-width:280px"></div>
+        <div><img class="capprev capPrev" alt="" hidden><div class="note capPrevNote">Pick a style to preview it on your video</div></div>
+      </div></div>
+    <div class="field full"><details><summary style="cursor:pointer;color:var(--muted);font-weight:600">Customize style</summary>
+      <div class="colors" style="margin-top:10px">
+        <label><input type="color" data-ov="highlight_color" value="${ov.highlight_color || '#FFE600'}">Active word</label>
+        <label><input type="color" data-ov="text_color" value="${ov.text_color || '#FFFFFF'}">Other words</label>
+        <label style="flex:1;min-width:180px">Size<input type="range" min="40" max="110" data-ov="font_size" data-unit="" value="${ov.font_size || ov.size || 72}"><output>${ov.font_size || ov.size || 72}</output></label>
+        <label class="tog"><input type="checkbox" data-ov="uppercase" ${ov.uppercase === false ? '' : 'checked'}><span class="knob"></span><span class="tl">Uppercase</span></label>
+        <label>Outline<input type="number" min="0" max="20" data-ov="outline" value="${ov.outline ?? ''}" placeholder="auto"></label>
+        <label>Words/line<input type="number" min="1" max="10" data-ov="max_words_per_line" value="${ov.max_words_per_line ?? ''}" placeholder="auto"></label>
+        <div class="seg" data-ov="position">${[['lower', 'Bottom'], ['center', 'Center'], ['top', 'Top']].map(([v, l]) => `<button type="button" class="${v === pos ? 'on' : ''}" data-v="${v}" data-act="seg">${l}</button>`).join('')}</div>
+        <label class="tog"><input type="checkbox" data-ov="anim_pop" ${ov.anim === 'none' ? '' : 'checked'}><span class="knob"></span><span class="tl">Pop animation</span></label>
+      </div></details></div></div>`;
 }
 function readOpts(root) {
-  const o = { caption_style: {} };
+  const o = { caption_style: { preset: $('.stylePreset', root)?.value || 'bold-pop', overrides: {} } };
   $$('[data-opt]', root).forEach(el => {
     const k = el.dataset.opt; let v;
     if (el.classList.contains('seg')) v = $('.on', el)?.dataset.v;
     else if (el.type === 'checkbox') v = el.checked;
     else if (el.type === 'range' || el.type === 'number') v = Number(el.value);
     else v = el.value;
-    if (['highlight_color', 'text_color', 'font_size', 'uppercase'].includes(k)) o.caption_style[k] = v; else o[k] = v;
+    o[k] = v;
+  });
+  $$('[data-ov]', root).forEach(el => {
+    const k = el.dataset.ov;
+    if (k === 'anim_pop') { o.caption_style.overrides.anim = el.checked ? 'pop' : 'none'; return; }
+    let v;
+    if (el.classList.contains('seg')) v = $('.on', el)?.dataset.v;
+    else if (el.type === 'checkbox') v = el.checked;
+    else if ((el.type === 'range' || el.type === 'number') && el.value !== '') v = Number(el.value);
+    else if (el.type === 'color') v = el.value;
+    else if (el.value !== '') v = el.value;
+    else return;
+    o.caption_style.overrides[k] = v;
   });
   return o;
 }
+/* ---------- caption style picker (shared by Home, Regenerate, Edit modal) ---------- */
+const SAMPLES = { en: ['MAKE', 'IT', 'GO', 'VIRAL'], ar: ['اجعل', 'فيديوك', 'ينتشر', 'الآن'] };
+let STYLES = { base: {}, presets: {} }, sampleLang = 'en', tickIdx = 0;
+function injectFonts(presets) {
+  const seen = new Set(); let css = '';
+  Object.values(presets).forEach(p => [[p.font, p.font_file], [p.font_ar, p.font_ar_file]].forEach(([fam, file]) => {
+    if (fam && file && !seen.has(fam)) { seen.add(fam); css += `@font-face{font-family:'${fam}';src:url('/fonts/${file}')}`; }
+  }));
+  document.head.insertAdjacentHTML('beforeend', `<style>${css}</style>`);
+}
+function cardHTML(key, p0, base, sel) {
+  const p = { ...base, ...p0 }, ar = sampleLang === 'ar';
+  const fam = ar ? p.font_ar : p.font, S = n => `calc(${n} * 100cqw / 1080)`;
+  const stroke = p.outline ? `-webkit-text-stroke:${S(p.outline * 2)} ${p.outline_color};paint-order:stroke fill;` : '';
+  const shadow = p.shadow ? `text-shadow:0 ${S(p.shadow * 1.5)} ${S(p.shadow * 2)} #000a;` : '';
+  const boxed = p.box ? `background:${p.box_color}${Math.round(p.box_opacity * 2.55).toString(16).padStart(2, '0')};padding:.1em .4em;border-radius:.2em;` : '';
+  const pos = p.position === 'center' ? 'top:42%' : p.position === 'top' ? 'top:14%' : 'bottom:16%';
+  const words = SAMPLES[sampleLang].map(w => `<span class="w" data-hl="${p.highlight_color}" data-pill="${p.highlight_mode === 'pill' ? p.pill_color : ''}" data-pt="${p.pill_text}" data-sc="${p.active_scale}" style="color:${p.text_color}">${ar || !p.uppercase ? w : w.toUpperCase()}</span>`).join(' ');
+  return `<div class="scard ${key === sel ? 'sel' : ''}" data-k="${key}"><span class="name">${p0.label}</span>
+    <div class="cap" style="${pos};font-family:'${fam}',Arial;font-size:${S(p.size)};font-weight:${p.bold ? 700 : 400};${stroke}${shadow}${boxed}">${words}</div></div>`;
+}
+function paintStyles(root) {
+  const grid = $('.styleGrid', root); if (!grid) return;
+  const sel = $('.stylePreset', root)?.value || 'bold-pop';
+  grid.innerHTML = Object.entries(STYLES.presets).map(([k, p]) => cardHTML(k, p, STYLES.base, sel)).join('');
+}
+function mountStyles(root, preset) {
+  if ($('.stylePreset', root)) $('.stylePreset', root).value = preset || 'bold-pop';
+  paintStyles(root);
+}
+function collectOverrides(root) {
+  return readOpts(root).caption_style.overrides;
+}
+let editCtx = null;
+function currentClipCtx() { return editCtx; }   // set by the Edit modal; null elsewhere
+let _pv; function previewReal(root) {
+  clearTimeout(_pv); _pv = setTimeout(async () => {
+    if (typeof currentClipCtx !== 'function' || !currentClipCtx()) return;
+    const { pid, rank, t } = currentClipCtx();
+    const img = $('.capPrev', root); if (!img) return;
+    try {
+      const r = await fetch(`/api/projects/${pid}/clips/${rank}/caption-preview`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Marrow': '1' },
+        body: JSON.stringify({ t, style: { preset: $('.stylePreset', root)?.value || 'bold-pop', overrides: collectOverrides(root) } }) });
+      const d = await r.json(); img.src = d.image; img.hidden = false;
+      const note = $('.capPrevNote', root); if (note) note.hidden = true;
+    } catch (e) { /* keep the old preview on failure */ }
+  }, 300);
+}
+// one global ticker lights the active word on every card (cheap, no per-card timers)
+setInterval(() => {
+  tickIdx = (tickIdx + 1) % 4;
+  document.querySelectorAll('.scard .cap').forEach(cap => cap.querySelectorAll('.w').forEach((w, i) => {
+    const on = i === tickIdx, pill = w.dataset.pill;
+    w.style.color = on ? (pill ? w.dataset.pt : w.dataset.hl) : '';
+    w.style.transform = on ? `scale(${w.dataset.sc / 100})` : 'scale(1)';
+    w.style.background = on && pill ? pill : 'transparent';
+    w.style.borderRadius = '.25em'; w.style.padding = on && pill ? '0 .25em' : '0';
+  }));
+}, 450);
+(async () => {
+  try {
+    STYLES = await (await fetch('/api/caption-styles')).json();
+    injectFonts(STYLES.presets);
+    repaintStyles();
+  } catch (_) {}
+})();
+function repaintStyles() {
+  document.querySelectorAll('.styleGrid').forEach(g => {
+    const scope = g.closest('.optbody,.modal') || document;
+    paintStyles(scope);
+  });
+}
+document.addEventListener('click', e => {
+  const card = e.target.closest('.styleGrid .scard');
+  if (card) {
+    const scope = card.closest('.optbody,.modal') || document;
+    const hid = $('.stylePreset', scope); if (hid) hid.value = card.dataset.k;
+    paintStyles(scope); previewReal(scope); return;
+  }
+  const lb = e.target.closest('.sampleLang button');
+  if (lb) {
+    sampleLang = lb.dataset.l;
+    $$('.sampleLang button').forEach(x => x.classList.toggle('on', x === lb));
+    repaintStyles();
+    return;
+  }
+  const pb = e.target.closest('#ed-pos button');
+  if (pb) {
+    $$('#ed-pos button').forEach(x => x.classList.toggle('on', x === pb));
+    const scope = pb.closest('.modal'); if (scope) previewReal(scope);
+  }
+});
+document.addEventListener('input', e => {
+  const el = e.target;
+  if (el.type === 'range' && el.dataset.ov) { const out = el.parentElement.querySelector('output'); if (out) out.textContent = el.value + (el.dataset.unit || ''); }
+  if (el.dataset.ov || (el.dataset.opt && el.closest('.optbody,.modal')?.querySelector('.styleGrid'))) {
+    const scope = el.closest('.optbody,.modal'); if (scope) previewReal(scope);
+  }
+});
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.type === 'range' && el.dataset.opt) { const out = el.parentElement.querySelector('output') || el.previousElementSibling?.querySelector?.('output'); if (out) out.textContent = el.value + (el.dataset.unit || ''); }
@@ -318,17 +580,22 @@ function renderSide() {
   const c = $('#navcount'); c.hidden = !n; c.textContent = n;
   const s = state.system;
   const row = (cls, t) => `<div class="dotrow"><span class="dot ${cls}"></span>${t}</div>`;
-  $('#engine').innerHTML = '<h4>Engine</h4>' + (!s ? row('', 'Checking…') : [
-    row(s.ffmpeg ? 'ok' : 'bad', s.ffmpeg ? 'FFmpeg ready' : 'FFmpeg missing'),
-    s.ollama.reachable && s.ollama.model_ready ? row('ok', 'AI scoring ready') : row(s.ollama.reachable ? 'warn' : '', s.ollama.reachable ? 'AI model not pulled' : 'AI off (heuristics)'),
-    row(s.gpu ? 'ok' : '', s.gpu ? 'CUDA GPU found' : 'CPU mode')].join(''));
+  const ffRow = !s ? row('', 'Checking…') : row(s.ffmpeg ? 'ok' : 'bad', s.ffmpeg ? 'FFmpeg ready' : 'FFmpeg missing');
+  const whisperRow = !s ? '' : s.gpu ? row('ok', 'Whisper: GPU (working)')
+    : row('warn', `Whisper: CPU${s.gpu_error ? ' — ' + esc(String(s.gpu_error).slice(0, 90)) : ''}`);
+  const encRow = !s ? '' : row(s.encoder === 'h264_nvenc' ? 'ok' : '', `Encoder: ${s.encoder === 'h264_nvenc' ? 'NVENC' : 'libx264'}`);
+  const aiRow = !s ? '' : (s.ollama.reachable && s.ollama.model_ready ? row('ok', 'AI scoring ready')
+    : row(s.ollama.reachable ? 'warn' : '', s.ollama.reachable ? 'AI model not pulled' : 'AI off (heuristics)'));
+  $('#engine').innerHTML = '<h4>Engine</h4>' + ffRow + whisperRow + encRow + aiRow;
 }
 async function refreshSystem() { try { state.system = await api('/api/system'); } catch (_) {} renderSide(); }
 
 /* ---------- project card (home + projects) ---------- */
 function projectCard(p) {
   const running = ACTIVE.has(p.status);
-  const meta = p.status === 'done' ? `${p.clips.length} clip${p.clips.length === 1 ? '' : 's'} · ${platLabel(p.settings.platform)}` :
+  const eng = p.engine?.transcribe ? ` · ${p.engine.transcribe.device === 'cuda' ? 'GPU' : 'CPU'}` : '';
+  const total = p.status === 'done' && p.finished && p.started ? ` · ${fmtT(p.finished - p.started)}` : '';
+  const meta = p.status === 'done' ? `${p.clips.length} clip${p.clips.length === 1 ? '' : 's'} · ${platLabel(p.settings.platform)}${eng}${total}` :
     p.status === 'error' ? 'Failed' : p.stage;
   return `<a class="pcard" href="#/p/${p.id}">
     <div class="pthumb">${p.thumb ? `<img src="${p.thumb}" alt="" loading="lazy">` : `<span class="ph">${p.status === 'error' ? '⚠' : running ? '⏳' : '🎬'}</span>`}
@@ -342,7 +609,7 @@ const projSig = list => JSON.stringify(list.map(p => [p.id, p.status, p.stage, p
 const main = $('#main');
 
 function viewHome() {
-  if (!state.opts) state.opts = state.settings ? state.settings.job_defaults : { clips: 5, duration: 45, platform: 'shorts', layout: 'crop', captions: true, use_llm: true, zoom: false, caption_style: { highlight_color: '#FFE600', text_color: '#FFFFFF', font_size: 72, uppercase: true } };
+  if (!state.opts) state.opts = state.settings ? state.settings.job_defaults : { clips: 5, duration: 45, platform: 'shorts', layout: 'crop', captions: true, use_llm: true, zoom: false, caption_style: { preset: 'bold-pop', overrides: {} } };
   const s = state.system;
   main.innerHTML = `
   ${s && !s.ffmpeg ? `<div class="banner bad">FFmpeg wasn't found on this computer, so clips can't be rendered. Install it (Windows: <code>winget install ffmpeg</code>), then open a new terminal and restart Marrow.</div>` : ''}
@@ -362,6 +629,7 @@ function viewHome() {
   <div class="sechead"><h2>Recent projects</h2><a class="btn ghost sm" href="#/projects">View all</a></div>
   <div id="recent"></div>`;
   paintUploadRow(); paintRecent();
+  mountStyles($('#optbox'), state.opts?.caption_style?.preset || 'bold-pop');
   $('#url').addEventListener('input', e => { state.url = e.target.value; if (e.target.value) clearPending(); });
   $('#url').addEventListener('keydown', e => { if (e.key === 'Enter') startProject(); });
   const box = $('#dropbox');
@@ -432,15 +700,36 @@ function viewProject() {
   const p = curProject();
   if (!p) { main.innerHTML = `<div class="empty">Project not found. <a class="grad" href="#/projects">Back to projects</a></div>`; return; }
   main.innerHTML = `<a class="back" href="#/projects">← Projects</a>
-    <div class="titlerow"><h2 id="pname"></h2><button class="icon" data-act="rename" title="Rename project">✎</button></div>
+    <div class="titlerow"><h2 id="pname" dir="auto"></h2><button class="icon" data-act="rename" title="Rename project">✎</button></div>
     <div class="pmeta" id="pmeta"></div><div class="actions" id="pactions"></div>
-    <div id="pstatus"></div><div class="clipgrid" id="clipgrid"></div>`;
+    <div id="pstatus"></div>
+    <div class="dash" id="dash">
+      <section class="scan" id="scan" data-state="idle">
+        <header class="scan-head"><b>Live Analysis</b><span class="pill" id="scanPill">IDLE</span></header>
+        <div class="stage"><video id="scanVideo" muted playsinline preload="auto"></video>
+          <div class="grid"></div><div class="vline v1"></div><div class="vline v2"></div><div class="hline"></div>
+          <div class="reticle" id="reticle"></div>
+          <div class="schip tl"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8"/></svg><span id="scanLabel">SCANNING CONTENT...</span></div>
+          <div class="schip tr">AI_MODEL: <span id="scanModel">—</span></div>
+          <div class="schip live"><i></i>LIVE SYNC</div>
+          <div class="mono bl"><div>&gt; ANALYSIS_THREAD_01: <b id="thr">ACTIVE</b></div><div>&gt; AUDIO_TRANSCRIPT: <b id="trs">PROCESSING</b></div></div>
+        </div>
+        <div id="hw-slot"></div>
+        <div class="strip" id="strip"><img id="stripImg" alt=""><div class="marks" id="marks"></div><div class="head" id="playhead"></div></div>
+        <details class="logs" open><summary>System Logs</summary><div class="logbody" id="logbody"></div></details>
+      </section>
+      <div><div class="sechead" style="margin:0 0 12px"><h2>Generated Shorts</h2><div><span class="pill" id="clipCount"></span> <span class="pill" id="elapsed"></span></div></div>
+      <div class="shorts" id="clipgrid"></div></div>
+    </div>`;
+  Scan.reset();
   paintProject(p, true);
+  if (ACTIVE.has(p.status)) { Scan.mount(p.id); hwStart(); refreshProject(p.id); }
 }
 function paintProject(p, force) {
   $('#pname').textContent = p.name;
   const src = p.source_kind === 'url' ? `<a href="${esc(p.source)}" target="_blank" rel="noopener">Source ↗</a>` : `<span>${p.source_kind === 'upload' ? 'Uploaded file' : 'Local file'}</span>`;
-  $('#pmeta').innerHTML = `<span class="pill ${p.status}"><i class="pd"></i>${p.status === 'done' ? 'Ready' : p.status}</span><span>${platLabel(p.settings.platform)}</span><span>${fmtDate(p.created)}</span>${src}`;
+  const eng = p.engine?.transcribe ? `<span>Whisper ${p.engine.transcribe.device === 'cuda' ? 'GPU' : 'CPU'} · ${esc(p.engine.transcribe.model || '')}</span>` : '';
+  $('#pmeta').innerHTML = `<span class="pill ${p.status}"><i class="pd"></i>${p.status === 'done' ? 'Ready' : p.status}</span><span>${platLabel(p.settings.platform)}</span><span>${fmtDate(p.created)}</span>${eng}${src}`;
   const asig = p.status + ':' + p.clips.length;
   const act = $('#pactions');
   if (force || act.dataset.sig !== asig) {
@@ -452,61 +741,207 @@ function paintProject(p, force) {
         ? `<button class="btn primary" data-act="regen">↻ Regenerate</button>${p.clips.length ? `<a class="btn" href="/api/projects/${p.id}/zip" download>⬇ Download all (.zip)</a>` : ''}<button class="btn" data-act="open-folder">📂 Open folder</button>${del}`
         : `<button class="btn primary" data-act="regen">↻ Try again</button>${del}`);
   }
-  // status panel
-  const ps = $('#pstatus');
-  if (ACTIVE.has(p.status)) {
-    if (!$('#bar', ps)) ps.innerHTML = `<div class="status"><div class="line"><span id="stage"></span><span id="pct"></span></div><div class="bar"><i id="bar"></i></div><div class="hint" id="hint"></div></div>`;
-    $('#stage').textContent = p.stage; $('#pct').textContent = Math.round(p.progress * 100) + '%';
-    $('#bar').style.width = Math.round(p.progress * 100) + '%';
-    const el = p.started ? Math.max(0, Date.now() / 1000 - p.started) : 0;
-    $('#hint').textContent = p.status === 'queued' ? 'Another job is running. This one starts automatically when it finishes.' :
-      `Running for ${fmtT(el)}. Transcription is the slowest step; results are cached, so re-runs are much faster.`;
-  } else if (p.status === 'error') {
+  const dash = $('#dash'), scan = $('#scan'), ps = $('#pstatus');
+  // status panel: only for terminal non-done states; the scan panel covers running
+  if (p.status === 'error') {
     ps.innerHTML = `<div class="status err"><div class="line"><span>Something went wrong</span></div><pre>${esc(p.error || 'Unknown error')}</pre></div>`;
   } else if (p.status === 'cancelled') {
     ps.innerHTML = `<div class="status"><div class="line"><span>Cancelled</span></div><div class="hint">Nothing was exported. Use “Try again” to rerun it (cached steps are reused).</div></div>`;
   } else ps.innerHTML = '';
+  const running = ACTIVE.has(p.status);
+  if (scan) scan.hidden = !running && p.status !== 'queued';
+  if (dash) dash.style.gridTemplateColumns = (!running && p.status !== 'queued') ? '1fr' : '';
+  if (!running) hwStop();
+  // pills
+  const cc = $('#clipCount'); if (cc) { cc.textContent = `${p.clips.length} Clip${p.clips.length === 1 ? '' : 's'}`; cc.hidden = !p.clips.length && !running; }
+  const el2 = $('#elapsed'); if (el2) {
+    if (p.started) { const s = Math.max(0, (p.finished || Date.now() / 1000) - p.started); el2.textContent = fmtT(s); el2.hidden = false; }
+    else el2.hidden = true;
+  }
   // clips
-  const grid = $('#clipgrid'); const have = new Map($$('.clip', grid).map(e => [e.dataset.rank, e]));
+  const grid = $('#clipgrid'); const have = new Map($$('.sc', grid).map(e => [e.dataset.rank, e]));
   const want = new Set(p.clips.map(c => String(c.rank)));
   have.forEach((el, k) => { if (!want.has(k)) el.remove(); });
   p.clips.forEach(c => {
-    const sig = [c.rev, c.status, c.title, c.last_error, c.hashtags.join(','), c.start, c.end, c.urls[c.platforms[0]]].join('|');
+    const sig = [c.rev, c.status, c.title, c.last_error, (c.hashtags || []).join(','), c.start, c.end, (c.urls || {})[c.platforms[0]]].join('|');
     const old = have.get(String(c.rank));
     if (old && old.dataset.sig === sig) return;
-    const el = cardEl(p, c, sig);
-    if (old) old.replaceWith(el); else grid.appendChild(el);
+    const eln = cardEl(p, c, sig);
+    if (old) old.replaceWith(eln); else grid.appendChild(eln);
   });
-  if (p.status === 'done' && !p.clips.length) grid.innerHTML = `<div class="empty" style="grid-column:1/-1">This project has no clips left.</div>`;
+  if (p.status === 'done' && !p.clips.length) grid.innerHTML = `<div class="empty">This project has no clips left.</div>`;
 }
 const scoreCls = s => s >= .7 ? 'hi' : s >= .5 ? 'mid' : 'lo';
 function cardEl(p, c, sig) {
-  const cur = c.platforms[0], el = document.createElement('article');
-  el.className = 'clip'; el.dataset.rank = c.rank; el.dataset.sig = sig; el.dataset.plat = cur;
+  const el = document.createElement('article');
+  el.dataset.rank = c.rank; el.dataset.sig = sig;
+  const ready = c.status !== 'rendering' && c.urls && c.urls[c.platforms[0]];
+  if (!ready) {
+    el.className = 'sc rendering';
+    el.innerHTML = `<div class="vid"></div><div><h3 dir="auto">${esc(c.title || 'Clip #' + c.rank)}</h3>
+      <div class="cmeta">${fmtT(c.duration ?? (c.end - c.start))} · source ${fmtT(c.start)}–${fmtT(c.end)}</div></div>`;
+    return el;
+  }
+  const cur = c.platforms[0]; el.dataset.plat = cur;
+  el.className = 'sc';
   const sc = Math.round(c.score * 100);
-  el.innerHTML = `<div class="vwrap">
+  const tags = (c.hashtags || []).map(t => `<span>#${esc(t)}</span>`).join('');
+  el.innerHTML = `<div class="vid">
       <video playsinline controls preload="metadata" ${c.thumb ? `poster="${c.thumb}"` : ''} src="${c.urls[cur]}"></video>
       <div class="score ${scoreCls(c.score)}" style="--v:${sc}" title="Marrow score: how strongly this moment ranked"><span>${sc}</span></div>
-      ${c.platforms.length > 1 ? `<div class="ptabs">${c.platforms.map(pl => `<button data-act="clip-plat" data-plat="${pl}" class="${pl === cur ? 'on' : ''}">${pl === 'shorts' ? 'Shorts' : 'Reels'}</button>`).join('')}</div>` : ''}
-      ${c.status === 'rendering' ? `<div class="rendering"><div class="spin"></div>Re-rendering…</div>` : ''}</div>
-    <div class="cbody"><h3>${esc(c.title)}</h3>
+      ${c.platforms.length > 1 ? `<div class="ptabs">${c.platforms.map(pl => `<button data-act="clip-plat" data-plat="${pl}" class="${pl === cur ? 'on' : ''}">${pl === 'shorts' ? 'Shorts' : 'Reels'}</button>`).join('')}</div>` : ''}</div>
+    <div><h3 dir="auto">${esc(c.title)}</h3>
       <div class="cmeta">${fmtT(c.duration)} · source ${fmtT(c.start)}–${fmtT(c.end)}</div>
-      ${c.reason ? `<p class="why">${esc(c.reason)}</p>` : ''}
-      ${c.hashtags.length ? `<div class="tags">${c.hashtags.map(t => `<span>#${esc(t)}</span>`).join('')}</div>` : ''}
+      ${tags ? `<div class="tags">${tags}</div>` : ''}
+      <div class="blk"><small>TITLE <button class="icon" data-act="copy-title" title="Copy title">⧉</button></small><div dir="auto">${esc(c.title)}</div></div>
+      <div class="blk"><small>CAPTION <button class="icon" data-act="copy-tags" title="Copy hashtags">⧉</button></small><div>${esc(c.reason || '')}${tags ? ' ' + tags.replace(/<[^>]+>/g, '') : ''}</div></div>
       ${c.last_error ? `<div class="cerr">Last re-render failed: ${esc(c.last_error)}</div>` : ''}
-      <div class="crow">
-        <a class="btn primary sm" data-act="dl" href="${c.urls[cur]}&download=1" download>⬇ Download</a>
-        <button class="btn sm" data-act="copy-title">Copy title</button>
-        ${c.hashtags.length ? `<button class="btn sm" data-act="copy-tags">Copy tags</button>` : ''}
-        <button class="btn sm" data-act="edit-clip" ${c.status === 'rendering' ? 'disabled' : ''}>✂ Edit</button>
-        <button class="btn sm danger" data-act="del-clip" ${c.status === 'rendering' ? 'disabled' : ''}>🗑</button>
+      <div class="acts">
+        <button class="btn edit sm" data-act="edit-clip">Edit</button>
+        <button class="btn subs sm" data-act="subs-clip">Subtitles</button>
+        <a class="btn primary sm" data-act="dl" href="${c.urls[cur]}&download=1" download>Download</a>
+        <button class="icon" data-act="del-clip" title="Delete clip">🗑</button>
       </div></div>`;
   return el;
 }
-function clipOf(btn) { const el = btn.closest('.clip'); const p = curProject(); return { el, p, c: p.clips.find(x => String(x.rank) === el.dataset.rank) }; }
+function clipOf(btn) { const el = btn.closest('.sc'); const p = curProject(); return { el, p, c: p.clips.find(x => String(x.rank) === el.dataset.rank) }; }
+/* ---------- live analysis scan + hardware polling ---------- */
+const Scan = (() => {
+  const $id = id => document.getElementById(id);
+  let _ret = null, srcSet = false;
+  function reset() {
+    clearInterval(_ret); _ret = null; srcSet = false;
+    if ($id('logbody')) $id('logbody').innerHTML = '';
+    if ($id('marks')) $id('marks').innerHTML = '';
+  }
+  function mount(pid) {
+    reset(); update._lc = null;
+    const v = $id('scanVideo');
+    if (v) { v.removeAttribute('src'); v.load(); }
+    const st = $id('stripImg'); if (st) st.removeAttribute('src');
+    clearInterval(_ret);
+    _ret = setInterval(() => { const r = $id('reticle'); if (!r) return;
+      r.style.left = 20 + Math.random() * 60 + '%'; r.style.top = 20 + Math.random() * 60 + '%'; }, 1100);
+  }
+  function update(p, lines) {
+    const root = $id('scan'); if (!root) return;
+    const v = $id('scanVideo'), st = p.stage || '';
+    if (!srcSet && p.proxy) { srcSet = true; if (v) v.src = `/api/projects/${p.id}/proxy`; }
+    if (p.strip) { const si = $id('stripImg'); if (si && !si.src) si.src = `/api/projects/${p.id}/strip`; }
+    const state = p.status !== 'running' ? 'idle' : /render|encod|caption|clip \d/i.test(st) ? 'live' : 'scanning';
+    root.dataset.state = state;
+    $id('scanPill').textContent = p.status === 'running' ? 'PROCESSING' : p.status.toUpperCase();
+    if (p.scan && p.scan.model) $id('scanModel').textContent = String(p.scan.model).toUpperCase();
+    else if (p.engine?.transcribe?.model) $id('scanModel').textContent = String(p.engine.transcribe.model).toUpperCase();
+    $id('scanLabel').textContent = /transcrib/i.test(st) ? 'TRANSCRIBING AUDIO...' : /scor|analy|rank/i.test(st) ? 'RANKING MOMENTS...' : 'SCANNING CONTENT...';
+    $id('trs').textContent = /transcrib/i.test(st) ? 'PROCESSING' : 'DONE';
+    const dur = (p.scan && p.scan.dur) || (v && v.duration) || 1;
+    if (state === 'scanning' && p.scan && v) {
+      if (Math.abs(v.currentTime - p.scan.t) > 3) { try { v.currentTime = p.scan.t; } catch (_) {} }
+      v.play().catch(() => {});
+      $id('playhead').style.left = (p.scan.t / dur * 100) + '%';
+    }
+    if (state === 'live') {
+      const c = (p.clips || []).find(x => x.status === 'rendering');
+      if (c && update._lc !== c.rank && v) {
+        update._lc = c.rank;
+        try { v.currentTime = c.start; } catch (_) {}
+        v.play().catch(() => {});
+        v.ontimeupdate = () => { if (v.currentTime > c.end) { try { v.currentTime = c.start; } catch (_) {} } };
+      }
+      if (c) $id('playhead').style.left = (c.start / dur * 100) + '%';
+    }
+    $id('marks').innerHTML = (p.candidates || []).map(c =>
+      `<i style="left:${c.s / dur * 100}%;width:${Math.max(.4, (c.e - c.s) / dur * 100)}%;background:${c.score >= 70 ? '#30d158' : c.score >= 45 ? '#ff9f0a' : '#6b6b76'}aa"></i>`).join('');
+    if (lines && lines.length) {
+      const box = $id('logbody');
+      const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+      lines.forEach(l => { const d = document.createElement('div'); d.textContent = l; box.appendChild(d); });
+      while (box.children.length > 300) box.firstChild.remove();
+      if (stick) box.scrollTop = box.scrollHeight;
+    }
+  }
+  return { mount, update, reset };
+})();
+let _hwT = null;
+function paintHw(d) {
+  const slot = document.getElementById('hw-slot'); if (!slot) return;
+  const eng = d.engines || {};
+  const t = eng.transcribe, r = eng.render, l = eng.llm;
+  const chip = (e) => e ? `<span class="chip ${e.device === 'cuda' || e.device === 'gpu' ? 'gpu' : 'cpu'}">${(e.device === 'cuda' || e.device === 'gpu') ? 'GPU' : 'CPU'}</span>` : '';
+  const stageName = (d.stage && d.stage.name) || 'Working';
+  const heads = [];
+  if (t) heads.push(`${chip(t)} Whisper · ${esc(t.model || '')}${t.language ? ' · ' + esc(t.language) : ''}`);
+  if (r) heads.push(`${chip(r)} Encode · ${esc(r.encoder || r.label || '')}`);
+  if (l && l.device !== 'off') heads.push(`${chip(l)} AI scoring · ${esc(l.model || '')}`);
+  const warn = [t, r].filter(e => e && e.fallback).map(e => e.fallback)[0];
+  const g = d.gpu;
+  const bar = (label, pct, text) =>
+    `<div class="hw-row"><span>${label}</span><div class="hw-bar"><i style="width:${Math.min(100, pct || 0)}%"></i></div><b>${text}</b></div>`;
+  slot.innerHTML = `<div class="hw">
+    <div class="hw-head"><span>${esc(stageName)}</span></div>
+    <div class="hw-head" style="font-weight:500;color:var(--muted)">${heads.join(' &nbsp;·&nbsp; ') || 'Preparing…'}</div>
+    ${warn ? `<div class="hw-warn">Fell back to CPU: ${esc(warn).replace(/</g, '&lt;')}</div>` : ''}
+    ${g ? bar(`GPU · ${esc(g.name.replace('NVIDIA GeForce ', ''))}`, g.percent, g.percent + '%' + (g.temp_c ? ` · ${g.temp_c}°C` : '')) : ''}
+    ${g ? bar('VRAM', g.vram_percent, `${g.vram_used_gb} / ${g.vram_total_gb} GB`) : ''}
+    ${g && g.encoder_percent != null ? bar('NVENC', g.encoder_percent, g.encoder_percent + '%') : ''}
+    ${bar('CPU', d.cpu.percent, d.cpu.percent + '%')}
+    ${bar('RAM', d.ram.percent, `${d.ram.used_gb} / ${d.ram.total_gb} GB`)}
+  </div>`;
+}
+function hwStart() {
+  hwStop();
+  const tick = async () => { try { paintHw(await (await fetch('/api/hardware')).json()); } catch (e) {} };
+  tick(); _hwT = setInterval(tick, 1000);
+}
+function hwStop() { if (_hwT) clearInterval(_hwT); _hwT = null; }
+let _rp = false;
+async function refreshProject(id) {
+  if (_rp) return; _rp = true;
+  try {
+    const cur = state.projects.find(x => x.id === id);
+    const from = cur?.logTotal || 0;
+    const np = await api(`/api/projects/${id}?log_from=${from}`);
+    const lines = np.log || [];
+    const i = state.projects.findIndex(x => x.id === id);
+    const merged = { ...(i >= 0 ? state.projects[i] : {}), ...np };
+    merged.log = ((i >= 0 ? state.projects[i].log : []) || []).concat(lines);
+    merged.logTotal = np.log_total ?? merged.log.length;
+    if (i >= 0) state.projects[i] = merged; else state.projects.unshift(merged);
+    renderSide();
+    if (state.route.name === 'project' && state.route.id === id) {
+      paintProject(merged);
+      Scan.update(merged, lines);
+    }
+    if (!ACTIVE.has(merged.status)) hwStop();
+  } catch (_) {} finally { _rp = false; }
+}
 
 /* ----- edit modal ----- */
-function openEdit(p, c) {
+function mountLiveCaptions(video, words, st, start0) {
+  const wrap = video.parentElement; wrap.style.position = 'relative'; wrap.classList.add('livewrap');
+  let el = $('.cap-live', wrap);
+  if (!el) { el = document.createElement('div'); el.className = 'cap-live'; wrap.appendChild(el); }
+  const size = `calc(${(st.size || 72)} * 100cqw / 1080)`;
+  const pos = st.position === 'center' ? 'top:38%;bottom:auto' : st.position === 'top' ? 'top:12%;bottom:auto' : '';
+  el.setAttribute('style', `font-family:'${st.font || 'Arial'}',Arial;font-weight:${st.bold === false ? 400 : 700};` +
+    `color:${st.text_color || '#fff'};font-size:${size};${pos};` +
+    (st.shadow === 0 ? '' : `text-shadow:0 .06em .12em #000a;`));
+  const per = st.max_words_per_line || 4;
+  const step = () => {
+    if (!document.contains(el)) return;
+    const t = video.currentTime + start0;
+    const i = words.findIndex(w => t >= w.s && t < w.e);
+    if (i >= 0) {
+      const a = Math.max(0, i - (i % per)), line = words.slice(a, a + per);
+      el.innerHTML = line.map((w, j) => `<span class="${a + j === i ? 'on' : ''}">${esc(st.uppercase === false ? w.t : w.t.toUpperCase())}</span>`).join(' ');
+    } else el.textContent = '';
+    video.requestVideoFrameCallback ? video.requestVideoFrameCallback(step) : requestAnimationFrame(step);
+  };
+  step();
+}
+function openEdit(p, c, tab = 'trim') {
+  const cs = p.settings.caption_style || {};
   const m = openModal(`<h3>Edit clip #${c.rank}</h3><p class="desc">Adjust where the clip starts and ends, fix caption words, or change the title. Re-rendering uses your cached transcript.</p>
     <div class="tabs"><button class="on" data-tab="trim">Trim</button><button data-tab="caps">Captions</button><button data-tab="info">Title &amp; tags</button></div>
     <div data-pane="trim"><div class="edgrid"><div><video id="ed-src" controls preload="metadata" src="/source/${p.video_id}"></video>
@@ -518,13 +953,21 @@ function openEdit(p, c) {
         <div class="actions"><button class="btn sm" id="ed-sets">Set start from playhead</button><button class="btn sm" id="ed-sete">Set end from playhead</button><button class="btn sm" id="ed-prev">▶ Preview selection</button></div>
         <p class="note">Clips must be at least 5 seconds. Start and end are positions in the source video.</p></div></div></div>
     <div data-pane="caps" hidden>
-      <div class="form"><div class="field">${tog('ed-cap', 'Burn in captions', true)}</div><div class="field">${tog('ed-up', 'Uppercase', state.opts?.caption_style?.uppercase ?? p.settings.caption_style.uppercase)}</div>
-        <div class="field full"><div class="colors"><label><input type="color" id="ed-hl" value="${p.settings.caption_style.highlight_color}">Active word</label><label><input type="color" id="ed-tc" value="${p.settings.caption_style.text_color}">Other words</label></div></div></div>
+      <input type="hidden" class="stylePreset" value="${esc(cs.preset || 'bold-pop')}">
+      <div class="seg sampleLang"><button type="button" data-l="en" class="on">English</button><button type="button" data-l="ar">العربية</button></div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
+        <div class="styles styleGrid" style="flex:1;min-width:280px"></div>
+        <div><img class="capprev capPrev" alt="" hidden><div class="note capPrevNote">Pick a style for a real-frame preview</div></div>
+      </div>
+      <div class="fl" style="margin:14px 0 8px">Position</div>
+      <div class="seg" id="ed-pos">${[['lower', 'Bottom'], ['center', 'Center'], ['top', 'Top']].map(([vv, l]) => `<button type="button" class="${(cs.overrides?.position || 'lower') === vv ? 'on' : ''}" data-v="${vv}">${l}</button>`).join('')}</div>
+      <div class="form" style="margin-top:12px"><div class="field">${tog('ed-cap', 'Burn in captions', true)}</div><div class="field">${tog('ed-up', 'Uppercase', (cs.overrides?.uppercase ?? true))}</div>
+        <div class="field full"><div class="colors"><label><input type="color" id="ed-hl" value="${cs.overrides?.highlight_color || '#FFE600'}">Active word</label><label><input type="color" id="ed-tc" value="${cs.overrides?.text_color || '#FFFFFF'}">Other words</label></div></div></div>
       <div class="fl" style="margin:16px 0 8px">Caption text <span style="font-weight:400">(edit any word; changed words are highlighted)</span></div>
-      <div class="words" id="ed-words"><span class="note">Loading words…</span></div>
+      <div class="words" id="ed-words" dir="auto"><span class="note">Loading words…</span></div>
       <div class="actions" style="margin-top:10px"><button class="btn sm" id="ed-reload">Reload words for current start/end</button></div></div>
-    <div data-pane="info" hidden><div class="form"><div class="field full"><span class="fl">Title</span><input class="txt" id="ed-title" maxlength="120" value="${esc(c.title)}"></div>
-      <div class="field full"><span class="fl">Hashtags (comma or space separated)</span><input class="txt" id="ed-tags" value="${esc(c.hashtags.join(', '))}"></div></div>
+    <div data-pane="info" hidden><div class="form"><div class="field full"><span class="fl">Title</span><input class="txt" id="ed-title" dir="auto" maxlength="120" value="${esc(c.title)}"></div>
+      <div class="field full"><span class="fl">Hashtags (comma or space separated)</span><input class="txt" id="ed-tags" dir="auto" value="${esc(c.hashtags.join(', '))}"></div></div>
       <div class="actions" style="margin-top:12px"><button class="btn" id="ed-saveinfo">Save title &amp; tags</button></div></div>
     <div class="mfoot"><button class="btn ghost" id="ed-cancel">Close</button><button class="btn primary" id="ed-go">Save &amp; re-render</button></div>`, true);
   const v = $('#ed-src', m), S = $('#ed-start', m), E = $('#ed-end', m);
@@ -535,19 +978,27 @@ function openEdit(p, c) {
   $('#ed-sets', m).onclick = () => { S.value = v.currentTime.toFixed(2); upd(); };
   $('#ed-sete', m).onclick = () => { E.value = v.currentTime.toFixed(2); upd(); };
   $('#ed-prev', m).onclick = () => { v.currentTime = +S.value; v.play(); const stop = () => { if (v.currentTime >= +E.value) { v.pause(); v.removeEventListener('timeupdate', stop); } }; v.addEventListener('timeupdate', stop); };
-  $$('.tabs button', m).forEach(b => b.onclick = () => { $$('.tabs button', m).forEach(x => x.classList.toggle('on', x === b)); $$('[data-pane]', m).forEach(pn => pn.hidden = pn.dataset.pane !== b.dataset.tab); });
-  const words = new Map();
+  const showTab = (t) => { $$('.tabs button', m).forEach(x => x.classList.toggle('on', x.dataset.tab === t)); $$('[data-pane]', m).forEach(pn => pn.hidden = pn.dataset.pane !== t); };
+  $$('.tabs button', m).forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  showTab(tab);
+  editCtx = { pid: p.id, rank: c.rank, t: c.start + 1 };
+  const syncCtx = () => { editCtx = { pid: p.id, rank: c.rank, t: c.start + v.currentTime }; previewReal(m); };
+  v.addEventListener('seeked', syncCtx); v.addEventListener('pause', syncCtx);
+  mountStyles(m, cs.preset || 'bold-pop');
+  previewReal(m);
+  const words = new Map(); let wordsArr = [];
   async function loadWords() {
     const box = $('#ed-words', m); box.innerHTML = '<span class="note">Loading words…</span>';
     try {
       const d = await api(`/api/projects/${p.id}/clips/${c.rank}/transcript?start=${encodeURIComponent(S.value)}&end=${encodeURIComponent(E.value)}`);
-      words.clear(); box.innerHTML = '';
+      words.clear(); box.innerHTML = ''; wordsArr = d.words;
       d.words.forEach(w => {
         words.set(w.i, w.t); const inp = document.createElement('input'); inp.value = w.t; inp.dataset.i = w.i; inp.size = Math.max(3, w.t.length);
-        inp.title = fmtT(w.s); inp.oninput = () => { inp.classList.toggle('chg', inp.value.trim() !== words.get(w.i)); inp.size = Math.max(3, inp.value.length); };
+        inp.setAttribute('dir', 'auto'); inp.title = fmtT(w.s); inp.oninput = () => { inp.classList.toggle('chg', inp.value.trim() !== words.get(w.i)); inp.size = Math.max(3, inp.value.length); };
         box.appendChild(inp);
       });
       if (!d.words.length) box.innerHTML = '<span class="note">No words in this range.</span>';
+      else { const st = { ...(STYLES.base || {}), ...(STYLES.presets?.[$('.stylePreset', m)?.value] || {}) }; mountLiveCaptions(v, wordsArr, st, 0); }
     } catch (e) { box.innerHTML = `<span class="note">${esc(e.message)}</span>`; }
   }
   $('#ed-reload', m).onclick = loadWords; loadWords();
@@ -558,11 +1009,15 @@ function openEdit(p, c) {
   };
   $('#ed-go', m).onclick = async () => {
     const edits = {}; $$('#ed-words input', m).forEach(i => { if (i.value.trim() && i.value.trim() !== words.get(+i.dataset.i)) edits[i.dataset.i] = i.value.trim(); });
+    const posBtn = $('#ed-pos .on', m);
     const btn = $('#ed-go', m); btn.disabled = true;
     try {
       const np = await api(`/api/projects/${p.id}/clips/${c.rank}/rerender`, { method: 'POST', body: {
         start: +S.value, end: +E.value, captions: $('[data-opt="ed-cap"]', m).checked, edits,
-        style: { highlight_color: $('#ed-hl', m).value, text_color: $('#ed-tc', m).value, uppercase: $('[data-opt="ed-up"]', m).checked } } });
+        style: { preset: $('.stylePreset', m)?.value || 'bold-pop',
+          overrides: { position: posBtn?.dataset.v || 'lower',
+            highlight_color: $('#ed-hl', m).value, text_color: $('#ed-tc', m).value,
+            uppercase: $('[data-opt="ed-up"]', m).checked } } } });
       mergeProject(np); closeModal(); toast('Re-rendering clip…');
     } catch (e) { toast(e.message, 'bad'); btn.disabled = false; }
   };
@@ -579,20 +1034,24 @@ function viewSettings() {
   const models = sys?.ollama?.models || [];
   const modelOpts = [...new Set([s.llm.model, ...models])].map(m => `<option ${m === s.llm.model ? 'selected' : ''}>${esc(m)}</option>`).join('');
   const sel = (id, opts, val) => `<select id="${id}">${opts.map(([v, l]) => `<option value="${v}" ${v === val ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
-  main.innerHTML = `<div class="sechead" style="margin-top:0"><h2>Settings</h2></div>
+  main.innerHTML = `<div class="sechead" style="margin-top:0"><h2>Settings</h2><button class="btn ghost sm" data-act="theme-toggle">🌙 Theme</button></div>
   <div class="card"><h3>System check</h3><div id="syscheck"></div><div class="actions" style="margin-top:12px"><button class="btn sm" data-act="recheck">Re-check</button></div></div>
   <div class="card"><h3>Transcription</h3><div class="form">
-    <div class="field"><span class="fl">Whisper model (bigger = more accurate, slower)</span>${sel('s-wmodel', ['tiny', 'base', 'small', 'medium', 'large-v3'].map(x => [x, x]), s.whisper.model)}</div>
+    <div class="field"><span class="fl">Whisper model</span>${sel('s-wmodel', [['auto', 'Auto (recommended)'], ['large-v3-turbo', 'large-v3-turbo (multilingual, fast)'], ['distil-large-v3', 'distil-large-v3 (English, fast)'], ['large-v3', 'large-v3 (best, slower)'], ['medium', 'medium'], ['small', 'small (CPU)']], s.whisper.model)}</div>
     <div class="field"><span class="fl">Device</span>${sel('s-wdev', [['auto', 'Auto (GPU if available)'], ['cuda', 'GPU (CUDA)'], ['cpu', 'CPU']], s.whisper.device)}</div>
-    <div class="field"><span class="fl">Language code (blank = auto-detect)</span><input class="txt" id="s-wlang" maxlength="3" placeholder="e.g. en, es, fr" value="${esc(s.whisper.language || '')}"></div></div></div>
+    <div class="field"><span class="fl">Language</span>${sel('s-wlang', [['', 'Auto-detect'], ['en', 'English'], ['ar', 'العربية (Arabic)'], ['fr', 'Français'], ['es', 'Español'], ['de', 'Deutsch'], ['it', 'Italiano'], ['pt', 'Português']], s.whisper.language || '')}</div>
+    <div class="field"><span class="fl">Accuracy</span>${sel('s-wqual', [['fast', 'Fast'], ['best', 'Best (large-v3 for non-English)']], s.whisper.quality || 'fast')}</div>
+    <div class="field full"><p class="desc" style="color:var(--muted)">First run downloads the model (~1–2 GB for turbo). Pre-fetch now to avoid waiting later:</p>
+      <div class="actions"><button class="btn" data-act="dl-models">⬇ Download models now</button><span class="note" id="mdl-status"></span></div></div></div></div>
   <div class="card"><h3>AI clip scoring (Ollama)</h3><div class="form">
     <div class="field full">${tog('s-llm', 'Use AI scoring by default', s.llm.enabled)}</div>
     <div class="field"><span class="fl">Ollama address</span><input class="txt" id="s-lhost" value="${esc(s.llm.host)}"></div>
     <div class="field"><span class="fl">Model ${models.length ? '(pulled models listed)' : '(Ollama not reachable; type a name)'}</span>
-      ${models.length ? `<select id="s-lmodel">${modelOpts}</select>` : `<input class="txt" id="s-lmodel" value="${esc(s.llm.model)}">`}</div></div></div>
+      ${models.length ? `<select id="s-lmodel">${modelOpts}</select>` : `<input class="txt" id="s-lmodel" value="${esc(s.llm.model)}">`}</div>
+    <div class="field full"><p class="note">Arabic transcripts are judged with qwen2.5:7b-instruct automatically (<code>ollama pull qwen2.5:7b-instruct</code>). Dialects may need caption edits.</p></div></div></div>
   <div class="card"><h3>Rendering &amp; captions</h3><div class="form">
-    <div class="field"><span class="fl">Video encoder</span>${sel('s-enc', [['libx264', 'CPU (libx264) – works everywhere'], ['h264_nvenc', 'NVIDIA GPU (NVENC) – faster']], s.render.encoder)}</div>
-    <div class="field"><span class="fl">Caption font (installed on this computer)</span><input class="txt" id="s-font" value="${esc(s.captions.font)}"></div>
+    <div class="field"><span class="fl">Video encoder</span>${sel('s-enc', [['auto', 'Auto (recommended)'], ['h264_nvenc', 'NVIDIA GPU (NVENC) – faster'], ['libx264', 'CPU (libx264) – works everywhere']], s.render.encoder)}</div>
+    <div class="field"><span class="fl">Caption font fallback (installed on this computer)</span><input class="txt" id="s-font" value="${esc(s.captions.font)}"></div>
     <div class="field full">${tog('s-loud', 'Normalize loudness (about −16 LUFS)', s.render.loudnorm)}</div></div></div>
   <div class="card"><h3>Data</h3><p class="desc" style="color:var(--muted);margin-bottom:12px">Everything is stored locally in <code>${esc(d.home)}</code> (output clips, cached downloads/transcripts, uploads). Marrow ${esc(d.version)}.</p>
     <div class="actions"><button class="btn" data-act="open-folder">📂 Open data folder</button></div></div>
@@ -604,13 +1063,16 @@ function paintSysCheck() {
   if (!s) { box.textContent = 'Checking…'; return; }
   const row = (cls, t, d) => `<div class="chk"><span class="dot ${cls}"></span><span><span class="t">${t}</span> <span class="d">${d}</span></span></div>`;
   box.innerHTML = row(s.ffmpeg ? 'ok' : 'bad', 'FFmpeg', s.ffmpeg ? 'found' : 'not found — install it and restart Marrow') +
+    row(s.gpu ? 'ok' : 'warn', 'Whisper on GPU', s.gpu ? 'working' : 'failed — ' + esc(s.gpu_error || 'no CUDA GPU') + ' (transcription uses the CPU)') +
+    row(s.encoder === 'h264_nvenc' ? 'ok' : '', 'Encoder', s.encoder === 'h264_nvenc' ? 'NVENC (GPU)' : 'libx264 (CPU)') +
+    row(s.libass === false ? 'warn' : 'ok', 'ASS captions', s.libass === false ? 'libass filter not found in FFmpeg — captions may not render' : 'libass available') +
     row(s.ollama.reachable ? 'ok' : 'warn', 'Ollama', s.ollama.reachable ? 'running at ' + esc(s.ollama.host) : 'not reachable at ' + esc(s.ollama.host) + ' — AI scoring will be skipped') +
     row(s.ollama.model_ready ? 'ok' : (s.ollama.reachable ? 'warn' : ''), 'Model “' + esc(s.ollama.model) + '”', s.ollama.model_ready ? 'ready' : 'not pulled — run: ollama pull ' + esc(s.ollama.model)) +
-    row(s.gpu ? 'ok' : '', 'CUDA GPU', s.gpu ? 'detected' : 'not detected — transcription will use the CPU');
+    (s.gpu ? '' : row('', 'GPU pip packages', 'for GPU speed run: pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"'));
 }
 function readSettings() {
   return {
-    whisper: { model: $('#s-wmodel').value, device: $('#s-wdev').value, language: $('#s-wlang').value.trim() },
+    whisper: { model: $('#s-wmodel').value, device: $('#s-wdev').value, language: $('#s-wlang').value, quality: $('#s-wqual').value },
     llm: { enabled: $('[data-opt="s-llm"]').checked, host: $('#s-lhost').value.trim(), model: $('#s-lmodel').value.trim() },
     render: { encoder: $('#s-enc').value, loudnorm: $('[data-opt="s-loud"]').checked },
     captions: { font: $('#s-font').value.trim() } };
@@ -619,7 +1081,8 @@ function readSettings() {
 /* ---------- actions (event delegation) ---------- */
 const actions = {
   async go() { await startProject(); },
-  seg(b) { $$('button', b.parentElement).forEach(x => x.classList.toggle('on', x === b)); },
+  seg(b) { $$('button', b.parentElement).forEach(x => x.classList.toggle('on', x === b));
+    const scope = b.closest('.optbody,.modal'); if (scope && $('.styleGrid', scope)) previewReal(scope); },
   'rm-upload'() { clearPending(); },
   async cancel() {
     try { mergeProject(await api(`/api/projects/${curProject().id}/cancel`, { method: 'POST', body: {} })); toast('Cancelling…'); } catch (e) { toast(e.message, 'bad'); }
@@ -628,6 +1091,7 @@ const actions = {
     const p = curProject();
     const m = openModal(`<h3>${p.status === 'done' ? 'Regenerate clips' : 'Try again'}</h3><p class="desc">Run the pipeline again with these settings. The download and transcript are cached, so this is much faster than the first run. Existing clips are replaced when it finishes.</p>
       <div id="rg-opts" style="margin:0 -18px">${optsPanel(p.settings)}</div><div class="mfoot"><button class="btn ghost" id="rg-no">Cancel</button><button class="btn primary" id="rg-go">Start</button></div>`);
+    mountStyles(m, p.settings.caption_style?.preset || 'bold-pop');
     $('#rg-no', m).onclick = closeModal;
     $('#rg-go', m).onclick = async () => {
       try { const np = await api(`/api/projects/${p.id}/regenerate`, { method: 'POST', body: { settings: readOpts(m) } }); closeModal(); mergeProject(np); location.hash = '#/p/' + p.id; viewProject(); }
@@ -660,6 +1124,7 @@ const actions = {
   'copy-title'(b) { copyText(clipOf(b).c.title, 'Title copied'); },
   'copy-tags'(b) { copyText(clipOf(b).c.hashtags.map(t => '#' + t).join(' '), 'Hashtags copied'); },
   'edit-clip'(b) { const { p, c } = clipOf(b); openEdit(p, c); },
+  'subs-clip'(b) { const { p, c } = clipOf(b); openEdit(p, c, 'caps'); },
   async 'del-clip'(b) {
     const { p, c } = clipOf(b);
     const r = await confirmBox({ title: 'Delete this clip?', text: `“${c.title}” will be removed from your disk.`, ok: 'Delete clip', danger: true });
@@ -667,6 +1132,20 @@ const actions = {
     try { mergeProject(await api(`/api/projects/${p.id}/clips/${c.rank}`, { method: 'DELETE' })); toast('Clip deleted', 'ok'); } catch (e) { toast(e.message, 'bad'); }
   },
   async recheck() { $('#syscheck').textContent = 'Checking…'; await refreshSystem(); paintSysCheck(); toast('Checked'); },
+  'theme-toggle'() { setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'); },
+  async 'dl-models'(b) {
+    const st = $('#mdl-status'); b.disabled = true;
+    try {
+      await api('/api/models/download', { method: 'POST', body: {} });
+      const poll = setInterval(async () => {
+        try {
+          const d = await api('/api/models/download');
+          st.textContent = d.running ? `Downloading… ${d.done.join(', ')}` : (d.error ? `Failed: ${d.error}` : `Done: ${d.done.join(', ')}`);
+          if (!d.running) { clearInterval(poll); b.disabled = false; toast(d.error ? d.error : 'Models downloaded', d.error ? 'bad' : 'ok'); }
+        } catch (_) { clearInterval(poll); b.disabled = false; }
+      }, 2000);
+    } catch (e) { toast(e.message, 'bad'); b.disabled = false; }
+  },
   async 'save-settings'() {
     try { state.settings = await api('/api/settings', { method: 'PUT', body: readSettings() }); state.opts = null; await refreshSystem(); viewSettings(); toast('Settings saved', 'ok'); }
     catch (e) { toast(e.message, 'bad'); }
@@ -705,11 +1184,15 @@ async function render() {
 }
 window.addEventListener('hashchange', render);
 async function refresh() {
-  try { state.projects = (await api('/api/projects')).projects; } catch (_) { return; }
+  try {
+    const keep = new Map(state.projects.map(p => [p.id, { log: p.log, logTotal: p.logTotal }]));
+    state.projects = (await api('/api/projects')).projects;
+    state.projects.forEach(p => { const k = keep.get(p.id); if (k && k.log) { p.log = k.log; p.logTotal = k.logTotal; } });
+  } catch (_) { return; }
   renderSide();
   const r = state.route.name;
   if (r === 'home') paintRecent(); else if (r === 'projects') paintProjects();
-  else if (r === 'project') { const p = curProject(); if (p) paintProject(p); }
+  else if (r === 'project') { const p = curProject(); if (p) refreshProject(p.id); }
 }
 setInterval(() => { if (document.hidden) return; if (hasActive()) refresh(); }, 1500);
 setInterval(() => { if (!document.hidden && !hasActive()) refresh(); }, 15000);

@@ -6,11 +6,13 @@ import yaml
 
 DEFAULTS = {
     "whisper": {
-        "model": "small",
+        "model": "auto",
         "device": "auto",
         "compute_type": "int8_float16",
         "language": None,
-        "beam_size": 5,
+        "beam_size": 1,
+        "batch_size": 8,
+        "quality": "fast",
     },
     "llm": {
         "enabled": True,
@@ -30,7 +32,7 @@ DEFAULTS = {
     },
     "render": {
         "layout": "crop",
-        "encoder": "libx264",
+        "encoder": "auto",
         "preset": "fast",
         "crf": 20,
         "fps": 30,
@@ -38,6 +40,7 @@ DEFAULTS = {
     },
     "captions": {
         "enabled": True,
+        "preset": "bold-pop",
         "font": "Arial",
         "bold": True,
         "font_size": 72,

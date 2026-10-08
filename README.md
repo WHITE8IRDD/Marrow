@@ -62,8 +62,10 @@ clips perform best well under the cap, so the default `clip.max_duration` is 60 
 ## Troubleshooting
 
 - **`ffmpeg was not found`**: install FFmpeg and open a new terminal.
-- **GPU or CUDA/DLL errors**: Marrow retries on CPU automatically. For GPU speed, faster-whisper
-  needs compatible cuBLAS/cuDNN libraries; see its README. Or set `whisper.device: cpu`.
+- **GPU or CUDA/DLL errors**: Marrow exposes pip-installed CUDA libraries automatically and retries
+  on CPU when the GPU is unusable (the UI shows the reason). For GPU speed on NVIDIA cards, install:
+  `pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"` (cuDNN 9 needs ctranslate2 ≥ 4.5).
+  Or set `whisper.device: cpu` to stay on CPU. See faster-whisper's README for details.
 - **6 GB VRAM**: Whisper is unloaded before the LLM runs. If Ollama still runs out of memory,
   use a smaller model such as `llama3.2:3b`.
 - **Ollama not reachable**: start the Ollama app. Marrow falls back to heuristic ranking and

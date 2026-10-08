@@ -23,10 +23,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import __version__, studio
+from . import __version__, hw, studio
 from .config import deep_merge, load_config
 from .downloader import VIDEO_SUFFIXES, _find_source
 from .utils import log, probe_duration, slugify
+
+mimetypes.add_type("font/ttf", ".ttf")  # Windows registry often lacks this; @font-face needs it
 
 WEB_DIR = Path(__file__).parent / "web"
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
@@ -35,7 +37,8 @@ ACTIVE = {"queued", "running"}
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 UPLOAD_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
-WHISPER_MODELS = {"tiny", "base", "small", "medium", "large-v3"}
+WHISPER_MODELS = {"auto", "large-v3-turbo", "distil-large-v3", "large-v3", "medium", "small"}
+WHISPER_QUALITIES = {"fast", "best"}
 
 
 class ApiError(Exception):
@@ -62,9 +65,59 @@ def _color(value, default):
     return value if isinstance(value, str) and HEX.match(value) else default
 
 
+def _ov_int(v, lo, hi):
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return None
+    return v if lo <= v <= hi else None
+
+
+_OV_INT_RANGES = {"font_size": (30, 140), "size": (30, 140), "outline": (0, 20),
+                  "shadow": (0, 10), "blur": (0, 5), "box_opacity": (0, 100),
+                  "pill_pad": (0, 30), "active_scale": (80, 200), "emphasis_scale": (80, 250),
+                  "max_words_per_line": (1, 10)}
+_OV_COLORS = {"highlight_color", "text_color", "outline_color", "pill_color", "pill_text", "box_color"}
+_OV_CHOICE = {"position": ("lower", "center", "top"), "anim": ("pop", "none"),
+              "highlight_mode": ("color", "pill")}
+_OV_BOOL = {"uppercase", "bold", "italic", "box"}
+
+
+def clean_overrides(ov):
+    ov = ov if isinstance(ov, dict) else {}
+    out = {}
+    for k, v in ov.items():
+        if k in _OV_COLORS:
+            if isinstance(v, str) and HEX.match(v):
+                out[k] = v
+        elif k in _OV_INT_RANGES:
+            lo, hi = _OV_INT_RANGES[k]
+            vv = _ov_int(v, lo, hi)
+            if vv is not None:
+                out[k] = vv
+        elif k in _OV_CHOICE:
+            if v in _OV_CHOICE[k]:
+                out[k] = v
+        elif k in _OV_BOOL:
+            out[k] = bool(v)
+    return out
+
+
 def clean_job_settings(raw):
+    from .caption_styles import PRESETS
+
     raw = raw if isinstance(raw, dict) else {}
     cs = raw.get("caption_style") if isinstance(raw.get("caption_style"), dict) else {}
+    legacy_ov = {}
+    if "highlight_color" in cs:
+        legacy_ov["highlight_color"] = _color(cs.get("highlight_color"), "#FFE600")
+    if "text_color" in cs:
+        legacy_ov["text_color"] = _color(cs.get("text_color"), "#FFFFFF")
+    if "font_size" in cs:
+        legacy_ov["font_size"] = _int(cs.get("font_size"), 30, 140, 72)
+    if "uppercase" in cs:
+        legacy_ov["uppercase"] = bool(cs.get("uppercase"))
+    merged_ov = {**legacy_ov, **clean_overrides(cs.get("overrides"))}
     return {
         "clips": _int(raw.get("clips"), 1, 20, 5),
         "duration": _int(raw.get("duration"), 15, 170, 45),
@@ -74,10 +127,8 @@ def clean_job_settings(raw):
         "use_llm": bool(raw.get("use_llm", True)),
         "zoom": bool(raw.get("zoom", False)),
         "caption_style": {
-            "highlight_color": _color(cs.get("highlight_color"), "#FFE600"),
-            "text_color": _color(cs.get("text_color"), "#FFFFFF"),
-            "font_size": _int(cs.get("font_size"), 30, 140, 72),
-            "uppercase": bool(cs.get("uppercase", True)),
+            "preset": cs.get("preset") if cs.get("preset") in PRESETS else "bold-pop",
+            "overrides": merged_ov,
         },
     }
 
@@ -96,9 +147,10 @@ def clean_global_settings(raw):
     host = str(l.get("host") or "").strip()
     return {
         "whisper": {
-            "model": w.get("model") if w.get("model") in WHISPER_MODELS else "small",
+            "model": w.get("model") if w.get("model") in WHISPER_MODELS else "auto",
             "device": w.get("device") if w.get("device") in ("auto", "cuda", "cpu") else "auto",
             "language": lang if re.fullmatch(r"[a-z]{2,3}", lang) else None,
+            "quality": w.get("quality") if w.get("quality") in WHISPER_QUALITIES else "fast",
         },
         "llm": {
             "enabled": bool(l.get("enabled", True)),
@@ -106,7 +158,7 @@ def clean_global_settings(raw):
             "host": host if re.match(r"^https?://", host) else "http://localhost:11434",
         },
         "render": {
-            "encoder": r.get("encoder") if r.get("encoder") in ("libx264", "h264_nvenc") else "libx264",
+            "encoder": r.get("encoder") if r.get("encoder") in ("auto", "libx264", "h264_nvenc") else "auto",
             "loudnorm": bool(r.get("loudnorm", True)),
         },
         "captions": {"font": (str(c.get("font") or "").strip()[:60] or "Arial")},
@@ -128,6 +180,7 @@ class App:
         self.queue = queue.Queue()
         self.projects = {}
         self.saved_settings = {}
+        self.model_dl = {"running": False, "done": [], "error": None}
         self._load()
         threading.Thread(target=self._worker, daemon=True, name="marrow-worker").start()
 
@@ -157,7 +210,14 @@ class App:
         path = self.home / "projects.json"
         tmp = path.with_suffix(".tmp")
         with self.lock:
-            tmp.write_text(json.dumps(list(self.projects.values()), ensure_ascii=False, indent=1), encoding="utf-8")
+            clean = []
+            for p in self.projects.values():
+                p = dict(p)
+                p.pop("log", None)       # live-only, never persisted
+                p.pop("scan", None)
+                p.pop("candidates", None)
+                clean.append(p)
+            tmp.write_text(json.dumps(clean, ensure_ascii=False, indent=1), encoding="utf-8")
             os.replace(tmp, path)
 
     def config_for(self, job_settings=None, extra=None):
@@ -175,20 +235,25 @@ class App:
         clips = []
         for c in p.get("clips", []):
             rev = c.get("rev", 0)
+            files = c.get("files", {})
             clips.append({
-                "rank": c["rank"], "start": c["start"], "end": c["end"], "duration": c["duration"],
-                "score": c["score"], "title": c["title"], "reason": c.get("reason", ""),
+                "rank": c["rank"], "start": c["start"], "end": c["end"],
+                "duration": c.get("duration", round(c["end"] - c["start"], 2)),
+                "score": c["score"], "title": c.get("title", ""), "reason": c.get("reason", ""),
                 "hashtags": c.get("hashtags", []), "status": c.get("status", "ready"),
-                "last_error": c.get("last_error"), "platforms": list(c["files"]),
-                "urls": {pl: f"/media/{vid}/{fn}?v={rev}" for pl, fn in c["files"].items()},
+                "last_error": c.get("last_error"), "platforms": list(files),
+                "urls": {pl: f"/media/{vid}/{fn}?v={rev}" for pl, fn in files.items()},
                 "thumb": f"/media/{vid}/{c['thumb']}?v={rev}" if c.get("thumb") else None,
             })
         clips.sort(key=lambda c: c["rank"])
         thumb = next((c["thumb"] for c in clips if c["thumb"]), None)
         keys = ("id", "name", "source", "source_kind", "status", "stage", "progress", "created",
-                "started", "finished", "error", "video_id", "settings")
+                "started", "finished", "error", "video_id", "settings", "engine")
         out = {k: p.get(k) for k in keys}
-        out.update(clips=clips, thumb=thumb)
+        out.update(clips=clips, thumb=thumb,
+                   scan=p.get("scan"), candidates=p.get("candidates", []),
+                   proxy=bool(vid and (self.work / vid / "proxy.mp4").exists()),
+                   strip=bool(vid and (self.work / vid / "strip.jpg").exists()))
         return out
 
     def get(self, pid):
@@ -332,6 +397,32 @@ class App:
             raise ApiError("Transcript cache not found. Use Regenerate to rebuild it.", 404)
         return {"words": studio.words_in_range(raw, start, end)}
 
+    def caption_preview(self, pid, rank, body):
+        from .caption_styles import PRESETS
+
+        p = self.get(pid)
+        c = self.clip(p, rank)
+        try:
+            t = float(body.get("t", c["start"]))
+        except (TypeError, ValueError):
+            raise ApiError("t must be a number (seconds).")
+        media = self.media_path(p)
+        if not media:
+            raise ApiError("The source video is no longer available on disk.", 409)
+        st = body.get("style") if isinstance(body.get("style"), dict) else {}
+        preset = st.get("preset") if st.get("preset") in PRESETS else p["settings"]["caption_style"].get("preset", "bold-pop")
+        style = {"preset": preset, "overrides": clean_overrides(st.get("overrides"))}
+        try:
+            words, _raw = studio.load_words(self.work / p["video_id"])
+        except FileNotFoundError:
+            raise ApiError("Transcript cache not found. Use Regenerate to rebuild it.", 404)
+        studio.attach_energy(self.work / p["video_id"], words)
+        cfg = self.config_for(p["settings"])
+        plats = list(c.get("files") or [p["settings"]["platform"]])
+        image = studio.render_caption_preview(cfg, media, self.work / p["video_id"], words,
+                                              t, style, plats[0], p["settings"]["layout"])
+        return {"image": image}
+
     def queue_rerender(self, pid, rank, body):
         with self.lock:
             p = self.get(pid)
@@ -384,6 +475,8 @@ class App:
                 self.queue.task_done()
 
     def _run_pipeline(self, pid):
+        hw.reset()
+        hw.set_stage("starting")
         with self.lock:
             p = self.projects.get(pid)
             if p is None:
@@ -398,11 +491,27 @@ class App:
             self._save()
             settings, source = dict(p["settings"]), p["source"]
 
-        def progress(stage, frac):
+        def have_source(src, duration):
+            threading.Thread(target=self._build_proxy,
+                             args=(str(src.path), str(src.workdir), duration),
+                             daemon=True, name="marrow-proxy").start()
+
+        def progress(stage, frac, *, log=None, scan=None, candidates=None, clips=None):
             if pid in self.cancel:
                 raise Cancelled()
             with self.lock:
                 p["stage"], p["progress"] = stage, round(float(frac), 3)
+                hw.set_stage(stage)
+                if log:
+                    L = p.setdefault("log", [])
+                    L.extend(log if isinstance(log, list) else [log])
+                    del L[:-300]
+                if scan is not None:
+                    p["scan"] = scan
+                if candidates is not None:
+                    p["candidates"] = candidates
+                if clips is not None:
+                    p["clips"] = clips
 
         try:
             from .pipeline import run_pipeline  # heavy imports happen here, not at server start
@@ -412,6 +521,7 @@ class App:
                 source, output_dir=str(self.out), config=cfg, clip_count=settings["clips"],
                 clip_duration=settings["duration"], platform=settings["platform"],
                 layout=settings["layout"], use_llm=settings["use_llm"], progress=progress,
+                on_source=have_source,
             )
             if not results:
                 raise RuntimeError("No clips were produced.")
@@ -441,7 +551,7 @@ class App:
                     f.unlink(missing_ok=True)
             with self.lock:
                 p.update(status="done", stage="Done", progress=1.0, video_id=vid, name=title, clips=clips,
-                         finished=time.time())
+                         finished=time.time(), engine=hw.get_engine()["engines"])
                 self._sync_manifest(p)
                 self._save()
         except Cancelled:
@@ -504,6 +614,51 @@ class App:
             pass
 
     # ---- misc
+    MODELS_PRELOAD = ("tiny", "distil-large-v3", "large-v3-turbo")
+
+    def _build_proxy(self, src_path, workdir, duration):
+        try:
+            studio.make_proxy(src_path, workdir, duration)
+        except Exception:
+            log.exception("Proxy build failed")
+
+    def start_model_download(self):
+        with self.lock:
+            if self.model_dl["running"]:
+                raise ApiError("A model download is already running.", 409)
+            self.model_dl.update(running=True, done=[], error=None)
+        threading.Thread(target=self._download_models, daemon=True, name="marrow-models").start()
+        return self.model_dl_status()
+
+    def model_dl_status(self):
+        with self.lock:
+            return dict(self.model_dl)
+
+    def _download_models(self):
+        import gc as _gc
+
+        try:
+            from faster_whisper import WhisperModel
+
+            from .transcriber import add_cuda_dll_dirs
+
+            add_cuda_dll_dirs()
+            total = len(self.MODELS_PRELOAD)
+            for i, m in enumerate(self.MODELS_PRELOAD, 1):
+                hw.set_stage(f"Downloading Whisper model {m} ({i}/{total})")
+                model = WhisperModel(m, device="cpu", compute_type="int8")
+                del model
+                _gc.collect()
+                with self.lock:
+                    self.model_dl["done"].append(m)
+        except Exception as e:
+            log.exception("Model download failed")
+            with self.lock:
+                self.model_dl["error"] = f"{type(e).__name__}: {str(e)[:500]}"
+        finally:
+            with self.lock:
+                self.model_dl["running"] = False
+
     def system(self):
         cfg = self.config_for()
         info = {
@@ -511,7 +666,30 @@ class App:
             "ollama": {"enabled": cfg["llm"]["enabled"], "host": cfg["llm"]["host"], "model": cfg["llm"]["model"],
                        "reachable": False, "model_ready": False, "models": []},
             "gpu": False,
+            "gpu_error": None,
         }
+        try:
+            from .transcriber import cuda_ready
+
+            ok, why = cuda_ready()
+            info["gpu"] = ok
+            info["gpu_error"] = why or None
+        except Exception as e:
+            info["gpu_error"] = f"{type(e).__name__}: {e}"
+        try:
+            from .renderer import pick_encoder
+
+            info["encoder"] = pick_encoder(cfg["render"].get("encoder", "auto"))
+        except Exception:
+            info["encoder"] = cfg["render"].get("encoder", "auto")
+        try:
+            import subprocess
+
+            fr = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True,
+                                text=True, timeout=15, encoding="utf-8", errors="replace")
+            info["libass"] = " ass " in fr.stdout
+        except Exception:
+            info["libass"] = False
         try:
             import requests
 
@@ -520,12 +698,6 @@ class App:
             names = [m.get("name", "") for m in r.json().get("models", [])]
             want = cfg["llm"]["model"]
             info["ollama"].update(reachable=True, models=names, model_ready=want in names or f"{want}:latest" in names)
-        except Exception:
-            pass
-        try:
-            import ctranslate2
-
-            info["gpu"] = ctranslate2.get_cuda_device_count() > 0
         except Exception:
             pass
         return info
@@ -540,10 +712,8 @@ class App:
                          "captions": {"font": cfg["captions"]["font"]}},
             "job_defaults": clean_job_settings({
                 "clips": cfg["clip"]["target_count"], "duration": 45,
-                "caption_style": {"highlight_color": cfg["captions"]["highlight_color"],
-                                  "text_color": cfg["captions"]["text_color"],
-                                  "font_size": cfg["captions"]["font_size"],
-                                  "uppercase": cfg["captions"]["uppercase"]},
+                "caption_style": {"preset": cfg["captions"].get("preset", "bold-pop"),
+                                  "overrides": {}},
                 "use_llm": cfg["llm"]["enabled"]}),
         }
 
@@ -753,7 +923,16 @@ def r_list(h, q):
 @route("GET", r"/api/projects/([0-9a-f]+)")
 def r_get(h, q, pid):
     with h.app.lock:
-        h.send_json(h.app.public(h.app.get(pid)))
+        pub = h.app.public(h.app.get(pid))
+        full = h.app.projects[pid].get("log", [])
+        try:
+            n = int((q.get("log_from") or ["0"])[0])
+        except ValueError:
+            n = 0
+        n = max(0, n)
+        pub["log"] = full[n:]
+        pub["log_total"] = len(full)
+    h.send_json(pub)
 
 
 @route("POST", r"/api/projects")
@@ -849,6 +1028,13 @@ def r_system(h, q):
     h.send_json(h.app.system())
 
 
+@route("GET", r"/api/hardware")
+def r_hw(h, q):
+    from . import hw
+
+    h.send_json(hw.snapshot())
+
+
 @route("GET", r"/api/settings")
 def r_settings(h, q):
     h.send_json(h.app.settings())
@@ -859,7 +1045,68 @@ def r_settings_put(h, q):
     h.send_json(h.app.save_settings(h.read_json()))
 
 
-@route("GET", r"/media/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)")
+@route("POST", r"/api/models/download")
+def r_models_dl(h, q):
+    h.send_json(h.app.start_model_download(), 202)
+
+
+@route("GET", r"/api/models/download")
+def r_models_dl_status(h, q):
+    h.send_json(h.app.model_dl_status())
+
+
+@route("GET", r"/api/caption-styles")
+def r_styles(h, q):
+    from .caption_styles import PRESETS, BASE
+
+    h.send_json({"base": BASE, "presets": PRESETS})
+
+
+@route("POST", r"/api/projects/([0-9a-f]+)/clips/(\d+)/caption-preview")
+def r_cap_preview(h, q, pid, rank):
+    h.send_json(h.app.caption_preview(pid, int(rank), h.read_json()))
+
+
+@route("GET", r"/fonts/([A-Za-z0-9._-]+)")
+def r_fonts(h, q, fname):
+    from .caption_styles import FONTS_DIR, PRESETS
+
+    allowed = {p.get("font_file") for p in PRESETS.values()} | {p.get("font_ar_file") for p in PRESETS.values()}
+    if fname not in allowed:
+        raise ApiError("File not found", 404)
+    path = (FONTS_DIR / fname).resolve()
+    if FONTS_DIR.resolve() not in path.parents or not path.is_file():
+        raise ApiError("File not found", 404)
+    h.send_file(path)
+
+
+@route("GET", r"/api/projects/([0-9a-f]+)/proxy")
+def r_proxy(h, q, pid):
+    with h.app.lock:
+        p = h.app.get(pid)
+        vid = p.get("video_id")
+    if not vid:
+        raise ApiError("Not ready yet", 404)
+    path = (h.app.work / vid / "proxy.mp4").resolve()
+    if h.app.work.resolve() not in path.parents or not path.is_file():
+        raise ApiError("Not ready yet", 404)
+    h.send_file(path)
+
+
+@route("GET", r"/api/projects/([0-9a-f]+)/strip")
+def r_strip(h, q, pid):
+    with h.app.lock:
+        p = h.app.get(pid)
+        vid = p.get("video_id")
+    if not vid:
+        raise ApiError("Not ready yet", 404)
+    path = (h.app.work / vid / "strip.jpg").resolve()
+    if h.app.work.resolve() not in path.parents or not path.is_file():
+        raise ApiError("Not ready yet", 404)
+    h.send_file(path)
+
+
+@route("GET", r"/media/([\w.\-]+)/([\w.\-]+)")
 def r_media(h, q, vid, fname):
     path = (h.app.out / vid / fname).resolve()
     if h.app.out not in path.parents or not path.is_file():
@@ -868,7 +1115,7 @@ def r_media(h, q, vid, fname):
     h.send_file(path, download_name=dl)
 
 
-@route("GET", r"/source/([A-Za-z0-9._-]+)")
+@route("GET", r"/source/([\w.\-]+)")
 def r_source(h, q, vid):
     with h.app.lock:
         p = next((x for x in h.app.projects.values() if x.get("video_id") == vid), None)
@@ -888,6 +1135,12 @@ def main(argv=None):
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args(argv)
 
+    os.environ.setdefault("PYTHONUTF8", "1")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
         from .utils import require_ffmpeg
@@ -899,6 +1152,15 @@ def main(argv=None):
         log.warning("WARNING: bound to %s. This app has no login; anyone on your network can use it.", args.host)
 
     Handler.app = App(args.home)
+    # Warm the real GPU probe once in the background so Settings opens instantly.
+    def _warm():
+        try:
+            from .transcriber import cuda_ready
+
+            cuda_ready()
+        except Exception:
+            pass
+    threading.Thread(target=_warm, daemon=True, name="marrow-gpu-probe").start()
     server = None
     for port in range(args.port, args.port + 10):
         try:

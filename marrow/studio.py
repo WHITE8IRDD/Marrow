@@ -14,6 +14,17 @@ from .utils import run_ffmpeg
 ENERGY_FPS = 16000 / 512  # must match audio_features.HOP / sample rate
 
 
+def make_proxy(src, workdir, duration):
+    """480p seek-friendly proxy + thumbnail strip for the Live Analysis panel."""
+    w = Path(workdir)
+    run_ffmpeg(["-i", src, "-vf", "scale=-2:480,fps=24", "-an", "-c:v", "libx264",
+                "-preset", "ultrafast", "-crf", "30", "-g", "24",
+                "-movflags", "+faststart", w / "proxy.mp4"])
+    step = max(1, duration / 24)
+    run_ffmpeg(["-i", src, "-vf", f"fps=1/{step:.3f},scale=160:-2,tile=24x1",
+                "-frames:v", "1", w / "strip.jpg"])
+
+
 def load_words(workdir):
     raw = json.loads((Path(workdir) / "words.json").read_text(encoding="utf-8"))
     return [Word(s, e, t) for s, e, t in raw["words"]], raw
@@ -73,10 +84,12 @@ def attach_energy(workdir, words):
 def render_clip_files(cfg, source, workdir, words, rank, start, end, platforms, out_dir, captions_on):
     """Re-render one clip for each platform. Writes to a temp file, then swaps atomically."""
     from .captioner import generate_ass
+    from .caption_styles import ensure_fonts
     from .renderer import render_clip
 
     ass_dir = Path(workdir) / "ass"
     ass_dir.mkdir(parents=True, exist_ok=True)
+    ensure_fonts(ass_dir)
     produced = {}
     for plat in platforms:
         pcfg = cfg["platforms"][plat]
@@ -95,7 +108,33 @@ def render_clip_files(cfg, source, workdir, words, rank, start, end, platforms, 
 
 def make_thumb(video_path, jpg_path):
     try:
-        run_ffmpeg(["-ss", "0.6", "-i", video_path, "-frames:v", "1", "-vf", "scale=360:-2", jpg_path])
+        run_ffmpeg(["-ss", "0.6", "-i", video_path, "-frames:v", "1",
+                    "-vf", "scale=360:-2,format=yuv420p", jpg_path])
         return True
     except Exception:
         return False
+
+
+def render_caption_preview(cfg, source, workdir, words, t, style, platform="shorts", layout="crop"):
+    """Render ONE frame (~1 s) so the UI can preview a caption style on the real video."""
+    import base64
+
+    from .caption_styles import ensure_fonts
+    from .captioner import generate_ass
+    from .renderer import build_filter_graph
+
+    p = cfg["platforms"][platform]
+    rx, ry = p["res_x"], p["res_y"]
+    source = str(Path(source).resolve())  # cwd below is the ass folder; keep the input reachable
+    t0 = max(0.0, t - 1.0)                              # include the words just before t
+    d = Path(workdir) / "ass_preview"
+    d.mkdir(parents=True, exist_ok=True)
+    ensure_fonts(d)
+    ass = d / "preview.ass"
+    generate_ass(words, t0, t0 + 4, ass, style, rx, ry, p["caption_margin_v"])
+    graph = build_filter_graph(layout, rx, ry, 30, {"enabled": False}, ass.name) + ";[v]scale=360:-2,format=yuv420p[p]"
+    jpg = (d / "preview.jpg").resolve()  # absolute: cwd below is d itself
+    run_ffmpeg(["-ss", f"{t0:.3f}", "-i", source, "-ss", f"{t - t0:.3f}",
+                "-filter_complex", graph, "-map", "[p]", "-frames:v", "1", "-q:v", "3", jpg],
+               cwd=str(d))
+    return "data:image/jpeg;base64," + base64.b64encode(jpg.read_bytes()).decode()

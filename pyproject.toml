@@ -9,6 +9,8 @@ description = "Local, free AI pipeline that turns long videos into captioned Sho
 requires-python = ">=3.10"
 dependencies = [
     "av>=11,<15",  # faster-whisper 1.x passes metadata_errors, removed in av 15
+    "psutil>=5.9",  # hardware panel (CPU/RAM stats)
+    "nvidia-ml-py>=12",  # hardware panel (GPU/VRAM/NVENC via NVML)
     "yt-dlp>=2025.1.1",
     "faster-whisper>=1.0.0",
     "librosa>=0.10.0",

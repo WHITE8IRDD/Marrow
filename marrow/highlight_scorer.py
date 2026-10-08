@@ -26,6 +26,9 @@ Transcript:
 \"\"\"
 """
 
+AR_PROMPT_ADD = ("The transcript is Arabic. Return JSON with English keys, "
+                 "but write `title`, `reason` and `hashtags` in Arabic.")
+
 
 def parse_llm_json(raw):
     """Extract and validate the JSON object from a model reply. Returns None if unusable."""
@@ -86,10 +89,13 @@ class OllamaScorer:
         log.warning("Ollama model '%s' is not pulled. Run: ollama pull %s", self.model, self.model)
         return False
 
-    def score(self, text: str):
+    def score(self, text: str, lang=None):
+        prompt = PROMPT.replace("{text}", text[:8000])
+        if (lang or "").startswith("ar"):
+            prompt += "\n" + AR_PROMPT_ADD
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": PROMPT.replace("{text}", text[:8000])}],
+            "messages": [{"role": "user", "content": prompt}],
             "stream": False,
             "format": "json",
             "keep_alive": "10m",

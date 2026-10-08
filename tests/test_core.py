@@ -117,7 +117,7 @@ def test_llm_score_range():
 def test_filter_graph_layouts():
     z = DEFAULTS["zoom"]
     crop = build_filter_graph("crop", 1080, 1920, 30, z, "clip.ass")
-    assert "crop=" in crop and "ass=clip.ass[v]" in crop
+    assert "crop=" in crop and "ass=clip.ass:fontsdir=fonts[v]" in crop
     blur = build_filter_graph("blur_fit", 1080, 1920, 30, z, "clip.ass")
     assert "overlay" in blur and "boxblur" in blur
     assert build_filter_graph("crop", 1080, 1920, 30, z, None).endswith("[base]null[v]")
