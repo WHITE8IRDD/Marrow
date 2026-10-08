@@ -22,10 +22,34 @@ def pick_encoder(pref):
     return "h264_nvenc" if _nvenc_ok else "libx264"
 
 
-def build_filter_graph(layout, rx, ry, fps, zoom, ass_name=None):
-    """Build the -filter_complex string. The final labeled output is [v]."""
+def build_filter_graph(layout, rx, ry, fps, zoom, ass_name=None, shot=None):
+    """Build the -filter_complex string. The final labeled output is [v].
+    shot: optional per-shot geometry for stacked/face layouts."""
     ratio = rx / ry
-    if layout == "blur_fit":
+    if layout == "stacked" and shot and shot.get("panels"):
+        (a, b) = shot["panels"][:2]
+        base = (
+            f"[0:v]split=2[ta][tb];"
+            f"[ta]crop={int(a['w'])}:{int(a['h'])}:{int(a['x'])}:{int(a['y'])},"
+            f"scale={rx}:{ry // 2}:flags=lanczos[top];"
+            f"[tb]crop={int(b['w'])}:{int(b['h'])}:{int(b['x'])}:{int(b['y'])},"
+            f"scale={rx}:{ry // 2}:flags=lanczos[bot];"
+            f"[top][bot]vstack=inputs=2[base]"
+        )
+    elif layout == "face" and shot and shot.get("cw"):
+        cw, ch = int(shot["cw"]), int(shot.get("ch", ry))
+        x0 = float(shot.get("fx0", 0))
+        x1 = float(shot.get("fx1", x0))
+        dur = max(float(shot.get("end", 0)) - float(shot.get("start", 0)), 0.01)
+        t0 = float(shot.get("start", 0))
+        if abs(x1 - x0) > 1.0:
+            x_expr = f"lerp({x0:.1f},{x1:.1f},clip((t-{t0:.3f})/{dur:.3f},0,1))"
+        else:
+            x_expr = f"{x0:.1f}"
+        crop = f"crop=min(iw\\,{cw}):{ch}:x='{x_expr}':y='(ih-{ch})/2'"
+        scale = f"scale={rx}:{ry}:flags=lanczos"
+        base = f"[0:v]{crop},{scale},setsar=1[base]"
+    elif layout == "blur_fit":
         base = (
             f"[0:v]split=2[bg][fg];"
             # blur the small copy, then upscale: same look, ~1/16th the blur cost
@@ -54,7 +78,7 @@ def build_filter_graph(layout, rx, ry, fps, zoom, ass_name=None):
 
 
 def render_clip(video_path, start, end, ass_path, output_path, config, platform="shorts",
-                on_progress=None):
+                on_progress=None, layout=None, shot=None):
     plat = config["platforms"][platform]
     rx, ry = plat["res_x"], plat["res_y"]
     r = config["render"]
@@ -68,7 +92,8 @@ def render_clip(video_path, start, end, ass_path, output_path, config, platform=
     if ass:
         ensure_fonts(ass.parent)  # bundled fonts next to the .ass; relative fontsdir avoids C: colons
 
-    graph = build_filter_graph(r["layout"], rx, ry, r["fps"], config["zoom"], ass.name if ass else None)
+    graph = build_filter_graph(layout or r["layout"], rx, ry, r["fps"], config["zoom"],
+                               ass.name if ass else None, shot=shot)
 
     if enc == "h264_nvenc":
         venc = ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",

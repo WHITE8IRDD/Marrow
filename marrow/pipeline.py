@@ -338,12 +338,26 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
                 hashtags=c.hashtags)
     del prog_clips[len(chosen):]
     emit("Rendering clips", 0.80, clips=prog_clips)
-    try:
-        from . import studio as _studio
+    from . import layout as _layout
+    from . import studio as _studio
 
+    clip_shots = {}
+    for rank, c in enumerate(chosen, 1):
+        s, e = padded_bounds(c, clip["pad_start"], clip["pad_end"], duration)
+        try:
+            clip_shots[rank] = _layout.analyze(render_src, s, e, workdir=src.workdir)
+        except Exception:
+            log.exception("Shot analysis failed")
+            clip_shots[rank] = None
+    seg_ranks = {rank for rank in clip_shots
+                 if _studio.needs_segmented_render(clip_shots.get(rank))}
+    if seg_ranks:
+        emit(f"Smart layout: segmented render for clip(s) {sorted(seg_ranks)}", 0.80,
+             clips=prog_clips)
+    try:
         for rank, c in enumerate(chosen, 1):
             s, e = padded_bounds(c, clip["pad_start"], clip["pad_end"], duration)
-            _studio.make_clip_thumb(src.path, s, src.workdir / f"pre_{rank:02d}.jpg")
+            _studio.make_clip_thumb(render_src, s, src.workdir / f"pre_{rank:02d}.jpg")
     except Exception:
         log.debug("clip preview thumbs failed", exc_info=True)
 
@@ -352,7 +366,8 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
 
     from .renderer import pick_encoder
 
-    tasks = [(rank, c, plat) for rank, c in enumerate(chosen, 1) for plat in render_plats]
+    tasks = [(rank, c, plat) for rank, c in enumerate(chosen, 1) for plat in render_plats
+             if rank not in seg_ranks or plat == render_plats[0]]
     workers = 2 if pick_encoder(cfg["render"].get("encoder", "auto")) == "h264_nvenc" else 1
     lock = threading.Lock()
     state = {"done": 0}
@@ -362,19 +377,11 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
         rank, c, plat = task
         try:
             start, end = padded_bounds(c, clip["pad_start"], clip["pad_end"], duration)
-            pcfg = cfg["platforms"][plat]
-            ass_path = None
-            if cfg["captions"]["enabled"]:
-                ass_path = work_ass / f"clip_{rank:02d}_{plat}.ass"
-                generate_ass(words, start, end, ass_path, cfg["captions"],
-                             pcfg["res_x"], pcfg["res_y"], pcfg["caption_margin_v"])
-            out_path = out_dir / f"clip_{rank:02d}_{plat}.mp4"
             t_start = time.time()
             last_emit = [0.0]
 
-            def rprog(frac):
+            def _bump(frac, left):
                 el = time.time() - t_start
-                left = el / frac * (1 - frac) if frac > 0.05 else None
                 with lock:
                     for pc in prog_clips:
                         if pc["rank"] == rank:
@@ -385,8 +392,30 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
                         emit(f"Rendering clip {rank}/{len(chosen)} ({plat})",
                              0.80 + 0.20 * state["done"] / max(1, len(tasks)), clips=prog_clips)
 
-            render_clip(render_src, start, end, ass_path, out_path, cfg, plat, on_progress=rprog)
-            outcome = (start, end, str(out_path), None)
+            def rprog(frac):
+                el = time.time() - t_start
+                left = el / frac * (1 - frac) if frac > 0.05 else None
+                _bump(frac, left)
+
+            shots = clip_shots.get(rank)
+            if _studio.needs_segmented_render(shots):
+                outs = _studio.render_clip_shots(
+                    cfg, render_src, src.workdir, words, rank, start, end,
+                    render_plats, out_dir, cfg["captions"]["enabled"], shots, rprog)
+                with lock:
+                    for pl2, fp in outs.items():
+                        finished[(rank, pl2)] = (start, end, str(fp), None)
+                outcome = (start, end, str(outs[render_plats[0]]), None)
+            else:
+                pcfg = cfg["platforms"][plat]
+                ass_path = None
+                if cfg["captions"]["enabled"]:
+                    ass_path = work_ass / f"clip_{rank:02d}_{plat}.ass"
+                    generate_ass(words, start, end, ass_path, cfg["captions"],
+                                 pcfg["res_x"], pcfg["res_y"], pcfg["caption_margin_v"])
+                out_path = out_dir / f"clip_{rank:02d}_{plat}.mp4"
+                render_clip(render_src, start, end, ass_path, out_path, cfg, plat, on_progress=rprog)
+                outcome = (start, end, str(out_path), None)
         except Exception as e:
             outcome = (None, None, None, e)
         with lock:
@@ -432,6 +461,7 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
             "reason": c.reason or _fallback_reason(c.text),
             "hashtags": c.hashtags or _fallback_tags(c.text),
             "files": files,
+            "shots": clip_shots.get(rank),
         })
 
     _write_manifest(output_dir, src, source, results)

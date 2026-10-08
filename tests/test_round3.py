@@ -56,7 +56,7 @@ def test_clean_export_spec_falls_back():
     app = App(tempfile.mkdtemp())
     s = app.clean_export_spec({"format": "avi", "quality": "8k", "framing": "zoom",
                                "style": {"preset": "nope", "overrides": {"position": "moon"}}})
-    assert s["format"] == "mp4" and s["quality"] == "1080p" and s["framing"] is None
+    assert s["format"] == "mp4" and s["quality"] == "1080p" and s["framing"] == "auto"
     assert s["style"] == {"preset": None, "overrides": {}}
     s2 = app.clean_export_spec({"style": {"preset": "hormozi", "overrides": {"position": "top"}}})
     assert s2["style"]["preset"] == "hormozi" and s2["style"]["overrides"] == {"position": "top"}

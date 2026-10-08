@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "marrow"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local, free AI pipeline that turns long videos into captioned Shorts and Reels."
 requires-python = ">=3.10"
 dependencies = [
@@ -22,6 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 ui = ["streamlit>=1.30"]
 diarization = ["pyannote.audio>=3.1", "torch>=2.0", "torchaudio>=2.0"]
+vision = ["opencv-python-headless>=4.8"]
 dev = ["pytest>=7"]
 
 [project.scripts]

@@ -82,7 +82,8 @@ def test_rerender_is_clip_scoped(tmp_path, monkeypatch):
     p = _proj(app, "v1", settings)
     calls = []
 
-    def fake_render(cfg, media_, workdir, words_, rank, start, end, platforms, out_dir, captions_on):
+    def fake_render(cfg, media_, workdir, words_, rank, start, end, platforms, out_dir, captions_on,
+                      shots=None):
         calls.append(rank)
         fp = Path(out_dir) / f"clip_{rank:02d}_shorts.mp4"
         fp.write_bytes(b"rendered")

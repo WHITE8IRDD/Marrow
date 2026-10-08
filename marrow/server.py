@@ -65,6 +65,23 @@ def _color(value, default):
     return value if isinstance(value, str) and HEX.match(value) else default
 
 
+def clean_clip_style(raw):
+    """Validate an edit/export style payload: {preset, overrides}, with backward
+    compatibility for the old flat {highlight_color, text_color, uppercase} keys."""
+    from .caption_styles import PRESETS
+
+    bs = raw if isinstance(raw, dict) else {}
+    preset = bs.get("preset") if bs.get("preset") in PRESETS else None
+    overrides = clean_overrides(bs.get("overrides"))
+    if preset is None:
+        for key in ("highlight_color", "text_color"):
+            if isinstance(bs.get(key), str) and HEX.match(bs[key]):
+                overrides[key] = bs[key]
+        if "uppercase" in bs:
+            overrides["uppercase"] = bool(bs["uppercase"])
+    return {"preset": preset, "overrides": overrides}
+
+
 def _ov_int(v, lo, hi):
     try:
         v = int(v)
@@ -105,6 +122,13 @@ def clean_overrides(ov):
         elif k == "font":
             if v in _font_allow():
                 out[k] = v
+        elif k == "min_gap":
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                continue
+            if fv in (0.28, 0.22, 0.16):
+                out[k] = fv
         elif k == "word_colors":
             if isinstance(v, list):
                 cols = [c for c in v if isinstance(c, str) and HEX.match(c)][:6]
@@ -309,6 +333,7 @@ class App:
                 "render_pct": c.get("render_pct", 0.0), "render_eta": c.get("render_eta"),
                 "urls": {pl: f"/media/{vid}/{fn}?v={rev}" for pl, fn in files.items()},
                 "thumb": f"/media/{vid}/{c['thumb']}?v={rev}" if c.get("thumb") else None,
+                "shots": c.get("shots"),
             })
         clips.sort(key=lambda c: c["rank"])
         thumb = next((c["thumb"] for c in clips if c["thumb"]), None)
@@ -466,6 +491,31 @@ class App:
                     tags = re.findall(r"[\w]+", tags)
                 c["hashtags"] = [str(t).lstrip("#").lower() for t in tags][:15]
                 c["custom_tags"] = True
+            if "style" in body and isinstance(body["style"], dict):
+                from .caption_styles import PRESETS
+
+                st = body["style"]
+                c["style"] = {
+                    "preset": st.get("preset") if st.get("preset") in PRESETS else None,
+                    "overrides": clean_overrides(st.get("overrides")),
+                }
+                c["custom_style"] = True
+            if "framing" in body:
+                fr = body["framing"]
+                if fr in ("auto", "crop", "blur_fit", "stacked", "face"):
+                    c["framing"] = fr
+                    c["custom_style"] = True
+            if "shot_layouts" in body and isinstance(body["shot_layouts"], dict):
+                sl = {str(k): v for k, v in body["shot_layouts"].items()
+                      if v in ("auto", "crop", "blur_fit", "stacked", "face")}
+                c["shot_layouts"] = sl
+                c["custom_style"] = True
+            if "words" in body and isinstance(body["words"], dict):
+                try:
+                    _, raw = studio.load_words(self.work / p["video_id"])
+                    studio.apply_edits(self.work / p["video_id"], raw, body["words"])
+                except FileNotFoundError:
+                    pass
             self._sync_manifest(p)
             self._save()
         return self.public(p)
@@ -514,8 +564,13 @@ class App:
         studio.attach_energy(self.work / p["video_id"], words)
         cfg = self.config_for(p["settings"])
         plats = list(c.get("files") or [p["settings"]["platform"]])
+        from . import layout as _layout
+
+        clip_shots = _layout.analyze(media, c["start"], c["end"], workdir=self.work / p["video_id"])
+        clip_shots = studio.apply_shot_overrides(clip_shots, c.get("shot_layouts"))
         image = studio.render_caption_preview(cfg, media, self.work / p["video_id"], words,
-                                              t, style, plats[0], p["settings"]["layout"])
+                                              t, style, plats[0], p["settings"]["layout"],
+                                              shots=clip_shots, clip_start=c["start"])
         return {"image": image}
 
     def queue_rerender(self, pid, rank, body):
@@ -539,12 +594,7 @@ class App:
             if end - start > cap:
                 raise ApiError(f"Clips for {', '.join(c['files'])} can be at most {cap} seconds.")
             bs = body.get("style") if isinstance(body.get("style"), dict) else {}
-            style = {}
-            for key in ("highlight_color", "text_color"):
-                if isinstance(bs.get(key), str) and HEX.match(bs[key]):
-                    style[key] = bs[key]
-            if "uppercase" in bs:
-                style["uppercase"] = bool(bs["uppercase"])
+            style = clean_clip_style(bs)
             args = {
                 "rank": rank, "start": start, "end": min(end, total),
                 "captions": bool(body.get("captions", True)), "style": style,
@@ -652,6 +702,7 @@ class App:
                     "rank": r["rank"], "start": r["start"], "end": r["end"], "duration": r["duration"],
                     "score": r["score"], "title": r["title"], "reason": r["reason"],
                     "hashtags": r["hashtags"], "files": files, "thumb": thumb if has_thumb else None,
+                    "shots": r.get("shots"),
                     "rev": int(time.time()), "status": "ready", "last_error": None,
                 })
             keep = {fn for c in clips for fn in list(c["files"].values()) + ([c["thumb"]] if c["thumb"] else [])}
@@ -710,17 +761,26 @@ class App:
             if (edits or timings) and studio.apply_edits(workdir, raw, edits, timings):
                 words, raw = studio.load_words(workdir)
             studio.attach_energy(workdir, words)
-            cfg = self.config_for(p["settings"], extra={"captions": style})
+            cfg = self.config_for(p["settings"])
+            base_caps = dict(cfg["captions"])
+            base_caps.update({"preset": style.get("preset") or cfg["captions"].get("preset"),
+                              "overrides": style.get("overrides") or {}})
+            cfg["captions"] = base_caps
             media = self.media_path(p)
             if not media:
                 raise RuntimeError("Source video is missing on disk.")
+            from . import layout as _layout
+
+            shots = _layout.analyze(media, start, end, workdir=workdir)
+            shots = studio.apply_shot_overrides(shots, c.get("shot_layouts"))
             produced = studio.render_clip_files(cfg, media, workdir, words, rank, start, end,
-                                                list(files), out_dir, captions)
+                                                list(files), out_dir, captions, shots)
             thumb = f"clip_{rank:02d}.jpg"
             has_thumb = studio.make_thumb(next(iter(produced.values())), out_dir / thumb)
             with self.lock:
                 c.update(start=start, end=end, duration=round(end - start, 2), rev=int(time.time() * 1000),
                          status="ready", last_error=None, thumb=thumb if has_thumb else c.get("thumb"),
+                         shots=shots,
                          style={"preset": style.get("preset"), "overrides": style.get("overrides", {})},
                          custom_style=True)
                 self._sync_manifest(p)
@@ -739,7 +799,7 @@ class App:
         data = {"source": p["source"], "title": p["name"], "clips": [{
             "rank": c["rank"], "start": c["start"], "end": c["end"], "duration": c["duration"],
             "score": c["score"], "title": c["title"], "reason": c.get("reason", ""),
-            "hashtags": c.get("hashtags", []),
+            "hashtags": c.get("hashtags", []), "shots": c.get("shots"),
             "files": {pl: str(self.out / vid / fn) for pl, fn in c["files"].items()},
         } for c in sorted(p["clips"], key=lambda c: c["rank"])]}
         try:
@@ -758,6 +818,14 @@ class App:
             fps = int(adv.get("fps") or 0)
         except (TypeError, ValueError):
             fps = 0
+
+        def _num(v, lo, hi):
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return None
+            return v if lo <= v <= hi else None
+
         return {
             "format": raw.get("format") if raw.get("format") in ("mp4", "mov") else "mp4",
             "quality": raw.get("quality") if raw.get("quality") in (
@@ -765,15 +833,20 @@ class App:
             "captions": bool(raw.get("captions", True)),
             "style": {"preset": st.get("preset") if st.get("preset") in PRESETS else None,
                       "overrides": clean_overrides(st.get("overrides"))},
-            "framing": raw.get("framing") if raw.get("framing") in ("crop", "blur_fit") else None,
-            "advanced": {"fps": fps if fps in (30, 60) else 0},
+            "framing": raw.get("framing") if raw.get("framing") in (
+                "auto", "crop", "blur_fit", "stacked", "face") else "auto",
+            "advanced": {"fps": fps if fps in (30, 60) else 0,
+                         "crf": _num(adv.get("crf"), 16, 32),
+                         "video_mbps": _num(adv.get("video_mbps"), 1, 80),
+                         "audio_kbps": _num(adv.get("audio_kbps"), 64, 320)},
         }
 
-    def export_cache_key(self, c, spec):
+    def export_cache_key(self, c, spec, edits=None):
         import hashlib
 
         blob = json.dumps([c.get("rank"), round(c.get("start", 0), 2), round(c.get("end", 0), 2),
-                           c.get("rev", 0), spec], sort_keys=True)
+                           c.get("rev", 0), c.get("style"), spec, edits or {}],
+                          sort_keys=True)
         return hashlib.sha1(blob.encode()).hexdigest()[:12]
 
     def _export_words(self, workdir, edits):
@@ -808,7 +881,10 @@ class App:
                     "preset": saved.get("preset") or p["settings"]["caption_style"].get("preset", "bold-pop"),
                     "overrides": saved.get("overrides") or p["settings"]["caption_style"].get("overrides", {}),
                 }
-            key = self.export_cache_key(c, spec)
+            if not spec["framing"] and c.get("framing") in ("auto", "crop", "blur_fit", "stacked", "face"):
+                spec["framing"] = None if c["framing"] == "auto" else c["framing"]
+            key = self.export_cache_key(
+                c, spec, body.get("edits") if isinstance(body.get("edits"), dict) else {})
             ext = ".mov" if spec["format"] == "mov" else ".mp4"
             dest = ensure_dir(self.out / p["video_id"] / "exports") / f"clip_{rank:02d}_{key}{ext}"
             job = _uuid.uuid4().hex[:10]
@@ -857,7 +933,9 @@ class App:
                     j["eta"] = round(left, 1) if left else None
 
             fp, enc = studio.export_clip(cfg, media, workdir, words, j["rank"],
-                                         c["start"], c["end"], spec, dest, prog)
+                                         c["start"], c["end"], spec, dest, prog,
+                                         shots=c.get("shots"),
+                                         overrides=c.get("shot_layouts"))
             with self.lock:
                 j.update(state="done", progress=1.0, file=fp, encoder=enc, eta=None)
         except Exception as e:
@@ -925,7 +1003,8 @@ class App:
                 dest = tmpdir / f"clip_{rank:02d}_{key}{ext}"
                 if not dest.exists():
                     studio.export_clip(cfg, media, workdir, words, rank, c["start"], c["end"],
-                                       one, dest)
+                                       one, dest, shots=c.get("shots"),
+                                       overrides=c.get("shot_layouts"))
                 made.append(dest)
                 with self.lock:
                     self.exports[job]["progress"] = round((n + 1) / len(ranks), 3)
@@ -1369,6 +1448,16 @@ def r_clip_pre(h, q, pid, rank):
     if h.app.work.resolve() not in path.parents or not path.is_file():
         raise ApiError("Not ready yet", 404)
     h.send_file(path)
+
+
+@route("GET", r"/api/projects/([0-9a-f]+)/waveform")
+def r_waveform(h, q, pid):
+    with h.app.lock:
+        p = h.app.get(pid)
+        vid = p.get("video_id")
+    if not vid:
+        raise ApiError("Not ready yet", 404)
+    h.send_json(studio.waveform(h.app.work / vid))
 
 
 @route("POST", r"/api/projects/([0-9a-f]+)/clips/(\d+)/export")

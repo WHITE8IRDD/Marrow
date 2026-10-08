@@ -28,8 +28,21 @@ macOS/Linux: same steps with `source venv/bin/activate` and your package manager
 marrow "https://www.youtube.com/watch?v=..." --clips 5 --duration 45 --platform both
 marrow "C:\videos\podcast.mp4" --platform shorts --layout blur_fit
 marrow "<url>" --no-llm            # skip Ollama, rank by audio and heuristics only
-marrow-ui                         # web UI at http://localhost:8765 (projects, edit + re-render, settings)
+marrow-ui                         # web UI at http://localhost:8765
 ```
+
+The web UI has Home (find-a-video flow), Projects, **Edits** (Premiere-style workspace:
+live preview, captions/framing/trim/text inspector, waveform timeline, undo/redo),
+and Settings pages.
+
+## Smart layout
+
+Clips with two people on camera render **stacked** (top/bottom panels with captions
+on the seam); single speakers get a **face-tracked crop**; slides and screen
+recordings use **blur fit**. Fully automatic per shot — override per shot in the
+Edits inspector or Framing control. Face detection is optional:
+`pip install -e ".[vision]"` (OpenCV YuNet, local model, ~230 KB auto-download).
+Without it, Marrow uses the configured crop/blur fit and logs one warning.
 
 `python -m marrow <url>` also works.
 

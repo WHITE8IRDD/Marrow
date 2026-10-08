@@ -176,7 +176,8 @@ input[type=color]{width:44px;height:34px;border:1px solid var(--line2);border-ra
 .ptabs{position:absolute;top:10px;right:10px;display:flex;gap:3px;background:#000a;border-radius:9px;padding:3px;backdrop-filter:blur(6px)}
 .ptabs button{background:none;border:0;border-radius:6px;padding:4px 9px;font-size:11.5px;font-weight:700;color:#bbb;cursor:pointer}
 .ptabs button.on{background:var(--accent);color:var(--accent-text)}
-.rendering{position:absolute;inset:0;background:#000b;display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:center;font-weight:600}
+.tile.is-rendering .tv{animation:tileShimmer 1.6s infinite linear;background:linear-gradient(110deg,#1c1c1e 30%,#2c2c2e 50%,#1c1c1e 70%);background-size:200% 100%}
+@keyframes tileShimmer{to{background-position:-200% 0}}
 .spin{width:30px;height:30px;border:3px solid #ffffff33;border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 .cbody{padding:14px;display:flex;flex-direction:column;gap:8px;flex:1}
@@ -359,13 +360,23 @@ input[type=range]{accent-color:var(--accent)}
 .run .tiles{flex:1}
 .run-left{display:flex;flex-direction:column;gap:10px;min-height:0}
 .run-left .stage{flex:1;min-height:0;aspect-ratio:auto}
-.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:var(--gap);align-content:start;overflow:auto;min-height:240px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:var(--gap);align-content:start;overflow:auto;min-height:240px}
 .hscroll{scrollbar-width:thin}
 .hscroll::-webkit-scrollbar{height:6px}
 .hscroll::-webkit-scrollbar-track{background:var(--line)}
 .hscroll::-webkit-scrollbar-thumb{background:var(--dim);border-radius:99px}
 .hscroll .scard{scroll-snap-align:start}
-.styles.hscroll{scroll-snap-type:x mandatory;grid-auto-columns:104px}
+.styles{min-width:0}
+.styles.hscroll{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:92px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:thin;padding-bottom:6px}
+.styles.hscroll::-webkit-scrollbar{display:block;height:6px}
+.styles.hscroll::-webkit-scrollbar-track{background:var(--line);border-radius:99px}
+.styles.hscroll::-webkit-scrollbar-thumb{background:var(--dim);border-radius:99px}
+.styles.hscroll .scard{border-radius:14px}
+.pickrow{display:flex;gap:8px;align-items:stretch}
+.pickrow .styles{flex:1}
+.pkarr{flex:none;width:28px;border-radius:10px;border:1px solid var(--line2);background:var(--panel2);color:var(--muted);cursor:pointer;font-size:16px}
+.pkarr:hover{color:var(--text)}
+.scard .name{font-size:10px}
 @media(max-width:1000px){.run{grid-template-columns:1fr;height:auto}}
 .tile{border-radius:var(--radius);background:var(--panel);border:1px solid var(--line);overflow:hidden}
 .tile .tv{position:relative;aspect-ratio:9/16;background:#000}
@@ -390,7 +401,7 @@ input[type=range]{accent-color:var(--accent)}
 .phead h2{font-size:20px;font-weight:800;letter-spacing:-.3px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .phead .back{margin:0;flex:none}
 /* finished clip grid */
-.clips{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
+.clips{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:var(--gap)}
 .clip{border-radius:20px;background:var(--panel);border:1px solid var(--line);overflow:hidden;display:flex;flex-direction:column}
 .clip .vid{position:relative;aspect-ratio:9/16;background:#000}
 .clip .vid video{width:100%;height:100%;object-fit:cover;display:block}
@@ -402,7 +413,7 @@ input[type=range]{accent-color:var(--accent)}
 .clip:hover .tcopy,.tcopy:focus-visible{opacity:1}
 .vt{display:flex;gap:8px;align-items:center;justify-content:center}
 .vcopy{background:#ffffff22;border:0;color:#fff;border-radius:8px;padding:2px 8px;cursor:pointer;display:inline-flex}
-.clip .acts{display:flex;gap:6px}
+.clip .acts{display:flex;gap:6px;flex-wrap:wrap}
 .clip .acts .btn{flex:1;height:34px;padding:0 10px;font-size:12.5px;min-height:34px}
 .clip .expand{position:absolute;right:8px;top:8px;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.55);color:#fff;border:0;font-size:15px;cursor:pointer}
 .clip .dur{position:absolute;left:8px;bottom:8px;padding:2px 8px;border-radius:99px;background:rgba(0,0,0,.6);color:#fff;font-size:11px;font-weight:700}
@@ -413,8 +424,22 @@ input[type=range]{accent-color:var(--accent)}
 .menu .pop button{background:none;border:0;text-align:start;padding:9px 12px;border-radius:9px;cursor:pointer;color:var(--text)}
 .menu .pop button:hover{background:var(--line2)}
 .menu .pop button.danger{color:var(--bad)}
-/* word timing timeline */
-.tl{position:relative;height:44px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);overflow:hidden;touch-action:none}
+/* export dialog */
+.modal.wide:has(> .exmodal){width:min(640px,100%)}
+.exbody{max-height:62vh;overflow:auto;display:grid;gap:4px;padding-right:2px}
+.exbody{max-height:62vh;overflow:auto;display:grid;gap:4px;padding-right:2px}
+.exgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
+.exgrid .full{grid-column:1/-1}
+.exgrid .cell{display:grid;gap:6px;align-content:start;min-width:0}
+.exgrid .cell>label{color:var(--muted);font-size:12px;font-weight:600;letter-spacing:.02em}
+.exmodal input[type=number],.exmodal select{height:36px;min-height:36px}
+.exmodal .seg button{padding-top:6px;padding-bottom:6px}
+.exrow{display:flex;align-items:center;gap:10px;min-height:36px}
+.exrow .tl{flex:1}
+.exfoot{position:sticky;bottom:-22px;background:var(--panel);padding-top:12px;margin-top:6px}
+.exsum{font-size:12.5px;color:var(--muted)}
+@media(max-width:560px){.exgrid{grid-template-columns:1fr}}
+.wtl{position:relative;height:44px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);overflow:hidden;touch-action:none}
 .tlb{position:absolute;top:6px;bottom:6px;border-radius:6px;background:var(--accent-soft);border:1px solid var(--accent);cursor:grab;min-width:8px}
 .tlb:active{cursor:grabbing}
 .viewer{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.88);display:grid;place-items:center}
@@ -439,8 +464,7 @@ input[type=range]{accent-color:var(--accent)}
 *:hover::-webkit-scrollbar-thumb{opacity:1}
 *::-webkit-scrollbar-corner{background:transparent}
 html{scroll-behavior:smooth}
-.styles.hscroll{scrollbar-width:none}
-.styles.hscroll::-webkit-scrollbar{display:none}
+.hscroll{scrollbar-width:thin}
 /* scoring placeholder card */
 .scorecard{width:420px;max-width:100%;margin:0 auto;border-radius:20px;background:var(--panel);border:1px solid var(--line);padding:24px;display:grid;gap:12px;position:relative}
 .scorecard img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:12px}
@@ -464,6 +488,7 @@ body.tabhidden .hline,body.tabhidden .vline,body.tabhidden .reticle{animation-pl
     <nav class="nav" id="nav">
       <a href="#/" data-r="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg>Home</a>
       <a href="#/projects" data-r="projects"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projects<span class="count" id="navcount" hidden></span></a>
+      <a href="#/edits" data-r="edits"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Edits</a>
       <a href="#/settings" data-r="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</a>
     </nav>
     <button class="btn ghost sm themebtn" id="themeBtn" title="Toggle light / dark theme">🌙 Theme</button>
@@ -641,7 +666,7 @@ function styleSectionHTML(preset) {
   return `<input type="hidden" class="stylePreset" value="${esc(preset || 'bold-pop')}">
     <div class="seg sampleLang"><button type="button" data-l="en" class="on">English</button><button type="button" data-l="ar">العربية</button></div>
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px">
-      <div class="styles styleGrid hscroll" style="flex:1;min-width:260px"></div>
+      <div class="styles styleGrid hscroll" style="flex:1;min-width:0"></div>
       <div class="liveprev"><video id="homePrev" muted playsinline loop preload="auto"></video><div class="livecap cap" id="homeCap" style="display:none"></div><div class="note" id="homePrevNote" style="position:absolute;inset:auto 8px 8px;text-align:center">Find a video to preview styles on real frames</div></div>
     </div>`;
 }
@@ -663,7 +688,7 @@ function optsPanel(o, compact) {
       <input type="hidden" class="stylePreset" value="${esc(cs.preset || 'bold-pop')}">
       <div class="seg sampleLang"><button type="button" data-l="en" class="on">English</button><button type="button" data-l="ar">العربية</button></div>
       <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
-        <div class="styles styleGrid" style="flex:1;min-width:280px"></div>
+        <div class="styles styleGrid" style="flex:1;min-width:0"></div>
         <div><img class="capprev capPrev" alt="" hidden><div class="note capPrevNote">Pick a style to preview it on your video</div></div>
       </div></div>
     <div class="field full"><details class="cust"><summary style="cursor:pointer;color:var(--muted);font-weight:600">Customize style</summary><div class="custwrap">${customizeHTML(ov, cs.preset)}</div></details></div>`}</div>`;
@@ -749,6 +774,15 @@ function repaintHomeCap() {
 }
 function paintStyles(root) {
   const grid = $('.styleGrid', root); if (!grid) return;
+  if (!grid.parentElement.classList.contains('pickrow')) {
+    const wrap = document.createElement('div'); wrap.className = 'pickrow';
+    grid.parentElement.insertBefore(wrap, grid); wrap.appendChild(grid);
+    const l = document.createElement('button'); l.className = 'pkarr'; l.type = 'button'; l.textContent = '‹';
+    const r = document.createElement('button'); r.className = 'pkarr'; r.type = 'button'; r.textContent = '›';
+    l.onclick = () => grid.scrollBy({ left: -220 });
+    r.onclick = () => grid.scrollBy({ left: 220 });
+    wrap.prepend(l); wrap.append(r);
+  }
   const sel = $('.stylePreset', root)?.value || 'bold-pop';
   grid.innerHTML = Object.entries(STYLES.presets).map(([k, p]) => cardHTML(k, p, STYLES.base, sel)).join('');
 }
@@ -813,10 +847,11 @@ function repaintStyles() {
 document.addEventListener('click', e => {
   const card = e.target.closest('.styleGrid .scard');
   if (card) {
-    const scope = card.closest('.optbody,.modal,#styleCard') || document;
+    const scope = card.closest('.optbody,.modal,#styleCard,.edside') || document;
     const hid = $('.stylePreset', scope); if (hid) hid.value = card.dataset.k;
     paintStyles(scope); previewReal(scope); repaintHomeCap();
     if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
+    scope.querySelector('.styleGrid .scard.sel')?.scrollIntoView({ inline: 'center', block: 'nearest' });
     scope.querySelectorAll('.custwrap').forEach(c => {
       c.innerHTML = customizeHTML(readStyleRoot(scope).overrides, card.dataset.k);
     });
@@ -829,12 +864,12 @@ document.addEventListener('click', e => {
     repaintStyles(); repaintHomeCap();
     return;
   }
-  const pb = e.target.closest('#ed-pos button');
-  if (pb) {
-    $$('#ed-pos button').forEach(x => x.classList.toggle('on', x === pb));
-    const scope = pb.closest('.modal'); if (scope) previewReal(scope);
-  }
 });
+document.addEventListener('wheel', e => {
+  const row = e.target.closest?.('.styles.hscroll');
+  if (!row) return;
+  if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); row.scrollLeft += e.deltaY; }
+}, { passive: false });
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.type === 'range' && el.dataset.ov) { const out = el.parentElement.querySelector('output'); if (out) out.textContent = el.value + (el.dataset.unit || ''); }
@@ -1242,7 +1277,7 @@ function paintProject(p, force) {
   // clips
   const grid = $('#clipgrid');
   if (grid) grid.className = running ? 'tiles' : 'clips';
-  const have = new Map($$('.sc,.tile,.clip', grid).map(e => [e.dataset.rank, e]));
+  const have = new Map($$('.tile,.clip', grid).map(e => [e.dataset.rank, e]));
   const want = new Set(p.clips.map(c => String(c.rank)));
   have.forEach((el, k) => { if (!want.has(k)) el.remove(); });
   p.clips.forEach(c => {
@@ -1270,7 +1305,7 @@ function cardEl(p, c, sig) {
   el.dataset.rank = c.rank; el.dataset.sig = sig;
   const ready = c.status !== 'rendering' && c.urls && c.urls[c.platforms[0]];
   if (!ready) {
-    el.className = 'tile rendering';
+    el.className = 'tile is-rendering';
     const pct = Math.round((c.render_pct || 0) * 100);
     const sub = c.render_eta != null ? `Rendering · ${fmtT(c.render_eta)} left` : (pct > 0 ? `Rendering · ${pct}%` : 'Waiting…');
     el.innerHTML = `<div class="tv"><img src="/api/projects/${p.id}/clips/${c.rank}/pre.jpg" alt="" onerror="this.remove()"><div class="ring" style="--p:${pct}"><b>${pct}%</b></div></div>
@@ -1302,6 +1337,23 @@ function cardEl(p, c, sig) {
   return el;
 }
 function clipOf(btn) { const el = btn.closest('.tile,.clip'); const p = curProject(); return { el, p, c: p.clips.find(x => String(x.rank) === el.dataset.rank) }; }
+/* edits workspace */
+.edwrap{display:grid;gap:12px}
+.edtop{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.edtop select{min-width:180px}
+#ed-dirty{color:var(--warn);border-color:var(--warn)}
+.edmain{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:14px;align-items:start}
+@media(max-width:1000px){.edmain{grid-template-columns:1fr}}
+.edcenter{display:grid;gap:10px;justify-items:center}
+.edcenter .livewrap{width:min(320px,100%);aspect-ratio:9/16;background:#000;border-radius:18px;overflow:hidden}
+.edcenter video{width:100%;height:100%;object-fit:contain;display:block}
+.edside{display:grid;gap:12px;min-width:0}
+.edtime{position:relative;border-radius:14px;background:var(--panel);border:1px solid var(--line);padding:10px;display:grid;gap:8px}
+.edwave{position:relative}
+#edx-wave{width:100%;height:64px;display:block}
+#edx-play{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 8px #fff;pointer-events:none}
+.edshots{display:flex;gap:6px;flex-wrap:wrap}
+.edshots .shot{padding:4px 10px;border-radius:99px;background:var(--panel2);border:1px solid var(--line2);font-size:11.5px}
 /* ---------- fullscreen viewer ---------- */
 const Viewer = (() => {
   let el, list = [], i = 0;
@@ -1535,17 +1587,15 @@ function openEdit(p, c, tab = 'trim') {
       <input type="hidden" class="stylePreset" value="${esc(cs.preset || 'bold-pop')}">
       <div class="seg sampleLang"><button type="button" data-l="en" class="on">English</button><button type="button" data-l="ar">العربية</button></div>
       <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:10px">
-        <div class="styles styleGrid" style="flex:1;min-width:280px"></div>
+        <div class="styles styleGrid" style="flex:1;min-width:0"></div>
         <div><img class="capprev capPrev" alt="" hidden><div class="note capPrevNote">Pick a style for a real-frame preview</div></div>
       </div>
-      <div class="fl" style="margin:14px 0 8px">Position</div>
-      <div class="seg" id="ed-pos">${[['lower', 'Bottom'], ['center', 'Center'], ['top', 'Top']].map(([vv, l]) => `<button type="button" class="${(cs.overrides?.position || 'lower') === vv ? 'on' : ''}" data-v="${vv}">${l}</button>`).join('')}</div>
-      <div class="form" style="margin-top:12px"><div class="field">${tog('ed-cap', 'Burn in captions', true)}</div><div class="field">${tog('ed-up', 'Uppercase', (cs.overrides?.uppercase ?? true))}</div>
-        <div class="field full"><div class="colors"><label><input type="color" id="ed-hl" value="${cs.overrides?.highlight_color || '#FFE600'}">Active word</label><label><input type="color" id="ed-tc" value="${cs.overrides?.text_color || '#FFFFFF'}">Other words</label></div></div></div>
+      <div class="custwrap">${customizeHTML(cs.overrides, cs.preset)}</div>
+      <div class="form" style="margin-top:12px"><div class="field">${tog('ed-cap', 'Burn in captions', true)}</div></div>
       <div class="fl" style="margin:16px 0 8px">Caption text <span style="font-weight:400">(edit any word; changed words are highlighted)</span></div>
       <div class="words" id="ed-words" dir="auto"><span class="note">Loading words…</span></div>
       <div class="fl" style="margin:12px 0 6px">Word timing <span style="font-weight:400">(drag to move, drag edges to trim)</span></div>
-      <div class="tl" id="ed-tl"></div>
+      <div class="wtl" id="ed-tl"></div>
       <div class="actions" style="margin-top:10px"><button class="btn sm" id="ed-reload">Reload words for current start/end</button></div></div>
     <div data-pane="info" hidden><div class="form"><div class="field full"><span class="fl">Title</span><input class="txt" id="ed-title" dir="auto" maxlength="120" value="${esc(c.title)}"></div>
       <div class="field full"><span class="fl">Hashtags (comma or space separated)</span><input class="txt" id="ed-tags" dir="auto" value="${esc(c.hashtags.join(', '))}"></div></div>
@@ -1640,7 +1690,6 @@ function openEdit(p, c, tab = 'trim') {
   };
   $('#ed-go', m).onclick = async () => {
     const edits = {}; $$('#ed-words input', m).forEach(i => { if (i.value.trim() && i.value.trim() !== words.get(+i.dataset.i)) edits[i.dataset.i] = i.value.trim(); });
-    const posBtn = $('#ed-pos .on', m);
     const btn = $('#ed-go', m); btn.disabled = true;
     const st = state.projects.find(x => x.id === p.id);
     const sc = st?.clips.find(x => x.rank === c.rank);
@@ -1648,10 +1697,7 @@ function openEdit(p, c, tab = 'trim') {
     try {
       const np = await api(`/api/projects/${p.id}/clips/${c.rank}/rerender`, { method: 'POST', body: {
         start: +S.value, end: +E.value, captions: $('[data-opt="ed-cap"]', m).checked, edits, timings,
-        style: { preset: $('.stylePreset', m)?.value || 'bold-pop',
-          overrides: { position: posBtn?.dataset.v || 'lower',
-            highlight_color: $('#ed-hl', m).value, text_color: $('#ed-tc', m).value,
-            uppercase: $('[data-opt="ed-up"]', m).checked } } } });
+        style: { preset: $('.stylePreset', m)?.value || 'bold-pop', overrides: collectOverrides(m) } } });
       mergeProject(np); closeModal(); toast('Re-rendering clip…');
     } catch (e) { toast(e.message, 'bad'); btn.disabled = false; if (sc) { sc.status = 'ready'; if (state.route.name === 'project') paintProject(st); } }
   };
@@ -1666,7 +1712,7 @@ function openExport(pid, ranks, batch) {
   const q0 = lastQuality() || state.settings?.settings?.export?.default_quality || '1080p';
   const styleOpts = [`<option value="current">Clip's current style</option>`,
     ...Object.entries(STYLES.presets || {}).map(([k, v]) => `<option value="${k}">${v.label || k}</option>`)].join('');
-  const m = openModal(`<h3>Export ${batch ? clips.length + ' clips' : '1 clip'}</h3>
+  const m = openModal(`<div class="exmodal"><h3>Export ${batch ? clips.length + ' clips' : '1 clip'}</h3>
     <div class="form">
       <div class="field"><span class="fl">Format</span><div class="seg" id="ex-fmt"><button type="button" class="on" data-v="mp4">MP4 (H.264)</button><button type="button" data-v="mov">MOV</button></div></div>
       <div class="field"><span class="fl">Quality</span><select id="ex-q" class="txt">
@@ -1680,17 +1726,26 @@ function openExport(pid, ranks, batch) {
         <div class="field"><span class="fl">FPS cap</span><div class="seg" id="ex-fps"><button type="button" class="on" data-v="0">Source</button><button type="button" data-v="30">30</button><button type="button" data-v="60">60</button></div></div>
       </div></details>
     <div class="form" style="margin-top:10px">
-      <div class="field"><label class="tog"><input type="checkbox" id="ex-cap" checked><span class="knob"></span><span class="tl">Include captions</span></label></div>
+      <div class="field"><div class="exrow"><span class="tl" style="flex:1">Include captions</span><label class="tog"><input type="checkbox" id="ex-cap" checked><span class="knob"></span></label></div></div>
       <div class="field"><span class="fl">Caption style</span><div style="display:flex;gap:8px"><select id="ex-style" class="txt" style="flex:1">${styleOpts}</select><button class="btn sm" id="ex-edtext">Edit text…</button></div></div>
       <div class="field full" id="ex-wordsWrap" hidden><div class="words" id="ex-words"><span class="note">Loading…</span></div></div>
-      <div class="field"><span class="fl">Framing</span><div class="seg" id="ex-frame"><button type="button" class="on" data-v="">As rendered</button><button type="button" data-v="crop">Center crop</button><button type="button" data-v="blur_fit">Blur fill</button></div></div>
-      <div class="field"><label class="tog"><input type="checkbox" disabled><span class="knob"></span><span class="tl">Watermark<small>None</small></span></label></div>
-      ${batch ? `<div class="field full"><label class="tog"><input type="checkbox" id="ex-all" checked><span class="knob"></span><span class="tl">Apply to all clips<small>Off = each clip keeps its own style</small></span></label></div>` : ''}
+      <div class="field" style="grid-column:1/-1"><span class="fl">Framing</span><div class="seg" id="ex-frame"><button type="button" class="on" data-v="auto">Auto</button><button type="button" data-v="crop">Center crop</button><button type="button" data-v="blur_fit">Blur fill</button></div></div>
+      <div class="field"><div class="exrow"><span class="tl" style="flex:1">Watermark<small>None</small></span><label class="tog"><input type="checkbox" disabled><span class="knob"></span></label></div></div>
+      ${batch ? `<div class="field full"><div class="exrow"><span class="tl" style="flex:1">Apply to all clips<small>Off = each clip keeps its own style</small></span><label class="tog"><input type="checkbox" id="ex-all" checked><span class="knob"></span></label></div></div>` : ''}
     </div>
-    <div class="upbar" id="ex-bar" hidden style="margin-top:12px"><i></i></div>
+    <div class="exsum" id="ex-sum" style="margin-top:10px"></div>
+    <div class="upbar" id="ex-bar" hidden style="margin-top:8px"><i></i></div>
     <div class="note" id="ex-note"></div><div class="note" id="ex-enc" style="margin-top:4px"></div>
-    <div class="mfoot"><button class="btn ghost" id="ex-no">Cancel</button><button class="btn primary" id="ex-go">Export</button></div>`, true);
+    <div class="mfoot exfoot"><button class="btn ghost" id="ex-no">Cancel</button><button class="btn primary" id="ex-go">Export</button></div></div>`, true);
   const segVal = id => { const b = $(`#${id} .on`, m); return b ? b.dataset.v : ''; };
+  const exSum = () => {
+    const q = $('#ex-q', m).value, f = segVal('ex-fmt') === 'mov' ? 'MOV' : 'MP4';
+    const fr = segVal('ex-frame'), frTxt = fr === 'crop' ? 'center crop' : fr === 'blur_fit' ? 'blur fill' : 'as rendered';
+    $('#ex-sum', m).textContent = `${q} · ${f} · ${frTxt}${$('#ex-cap', m).checked ? '' : ' · no captions'}`;
+  };
+  ['ex-q', 'ex-cap'].forEach(id => $('#' + id, m)?.addEventListener('change', exSum));
+  m.addEventListener('click', e => { if (e.target.closest('.seg')) exSum(); });
+  exSum();
   $$('#ex-fmt button,#ex-fps button,#ex-frame button', m).forEach(b => b.onclick = () => {
     $$('button', b.parentElement).forEach(x => x.classList.toggle('on', x === b)); });
   $('#ex-no', m).onclick = closeModal;
@@ -1757,6 +1812,263 @@ function openExport(pid, ranks, batch) {
       } catch (e) { clearInterval(poll); note.textContent = e.message; btn.disabled = false; }
     }, 1500);
   };
+}
+/* ---------- Edits workspace ---------- */
+const Edits = {
+  active: false, pid: null, rank: null, words: [], wav: null,
+  dirty: false, undo: [], redo: [],
+};
+function viewEdits() {
+  Edits.active = true;
+  const projs = state.projects.filter(p => p.clips && p.clips.length);
+  main.innerHTML = `<div class="sechead" style="margin-top:0"><h2>Edits</h2></div>
+  <div class="edwrap">
+    <div class="edtop">
+      <select id="edx-proj" class="txt">${projs.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('') || '<option value="">No projects with clips yet</option>'}</select>
+      <select id="edx-clip" class="txt"></select>
+      <span id="ed-dirty" class="pill" hidden>● Unsaved</span>
+      <span style="flex:1"></span>
+      <button class="btn sm" id="edx-undo">Undo</button>
+      <button class="btn sm" id="edx-redo">Redo</button>
+      <button class="btn sm primary" id="edx-save">Save</button>
+      <button class="btn sm" id="edx-export">Export</button>
+    </div>
+    <div class="edmain">
+      <div class="edcenter">
+        <div class="livewrap" id="edx-wrap"><video id="edx-v" controls playsinline preload="auto"></video></div>
+        <div class="actions"><button class="btn sm" id="edx-acc">Accurate preview</button><span class="note">Overlay is instant; Accurate renders one real frame</span></div>
+        <img id="edx-img" class="capprev" alt="" hidden>
+      </div>
+      <div class="edside">
+        <div class="tabs" id="edx-tabs"><button class="on" data-tab="caps">Captions</button><button data-tab="frame">Framing</button><button data-tab="trim">Trim</button><button data-tab="text">Text</button></div>
+        <div data-pane="caps">
+          <input type="hidden" class="stylePreset" id="edx-preset" value="bold-pop">
+          <div class="seg sampleLang"><button type="button" data-l="en" class="on">English</button><button type="button" data-l="ar">العربية</button></div>
+          <div class="styles styleGrid hscroll" style="margin-top:8px"></div>
+          <div class="custwrap" id="edx-cust" style="margin-top:8px"></div>
+        </div>
+        <div data-pane="frame" hidden>
+          <div class="fl">Layout</div>
+          <div class="seg" id="edx-layout"><button type="button" data-v="auto" class="on">Auto</button><button type="button" data-v="stacked">Stacked</button><button type="button" data-v="face">Face crop</button><button type="button" data-v="crop">Center crop</button><button type="button" data-v="blur_fit">Blur fit</button></div>
+          <div class="fl" style="margin-top:10px">Shots</div>
+          <div class="edshots" id="edx-shots"><span class="note">No shot data — layout is automatic.</span></div>
+        </div>
+        <div data-pane="trim" hidden>
+          <div class="trimrow">
+            <div class="fieldx"><span class="fl">Start (s)</span><input type="number" id="edx-s" step="0.1" min="0"></div>
+            <div class="fieldx"><span class="fl">End (s)</span><input type="number" id="edx-e" step="0.1" min="0"></div>
+          </div>
+          <div class="actions" style="margin-top:8px"><button class="btn sm" id="edx-sets">Set start from playhead</button><button class="btn sm" id="edx-sete">Set end from playhead</button><button class="btn sm" id="edx-loop">Loop selection</button></div>
+        </div>
+        <div data-pane="text" hidden>
+          <div class="words" id="edx-words" dir="auto"><span class="note">Loading…</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="edtime">
+      <div class="edwave"><canvas id="edx-wave"></canvas><div id="edx-play"></div></div>
+      <div class="wtl" id="edx-wtl"></div>
+    </div>
+  </div>`;
+  $('#edx-tabs').onclick = e => { const b = e.target.closest('button'); if (!b) return;
+    $$('#edx-tabs button').forEach(x => x.classList.toggle('on', x === b));
+    $$('.edside [data-pane]').forEach(pn => pn.hidden = pn.dataset.pane !== b.dataset.tab); };
+  $('#edx-proj').onchange = e => { const p = state.projects.find(x => x.id === e.target.value); if (p && p.clips.length) edxSelect(p.id, p.clips[0].rank); };
+  $('#edx-clip').onchange = e => edxSelect(Edits.pid, +e.target.value);
+  $('#edx-undo').onclick = edxUndo; $('#edx-redo').onclick = edxRedo;
+  $('#edx-save').onclick = edxSave;
+  $('#edx-export').onclick = () => { if (Edits.pid && Edits.rank) openExport(Edits.pid, [Edits.rank], false); };
+  $('#edx-acc').onclick = edxAccurate;
+  const ev = () => $('#edx-v');
+  $('#edx-sets').onclick = () => { const v = ev(); if (v) { $('#edx-s').value = (edxClip()?.start || 0) + v.currentTime; edxChanged(); } };
+  $('#edx-sete').onclick = () => { const v = ev(); if (v) { $('#edx-e').value = (edxClip()?.start || 0) + v.currentTime; edxChanged(); } };
+  $('#edx-loop').onclick = () => { const v = ev(); if (!v) return; v.currentTime = 0; v.play().catch(() => {});
+    const c = edxClip(); const stop = () => { if (v.currentTime >= ((+$('#edx-e').value || c.end) - c.start)) { v.currentTime = 0; } };
+    v.ontimeupdate = stop; };
+  $('#edx-v').onplay = () => requestAnimationFrame(edxTick);
+  document.querySelector('.edside').addEventListener('click', e => {
+    if (e.target.closest('.seg')) { edxSnapshot(); edxDirty(true); edxOverlay(); }
+  });
+  document.querySelector('.edside').addEventListener('change', e => {
+    if (e.target.matches('input,select')) { edxSnapshot(); edxDirty(true); edxOverlay(); }
+  });
+  document.querySelector('.edwave').addEventListener('click', e => {
+    const v = ev(); if (!v || !v.duration) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    v.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * v.duration;
+  });
+  document.addEventListener('keydown', edxKeys);
+  if (projs.length) edxSelect(projs[0].id, projs[0].clips[0].rank);
+}
+function edxProject() { return state.projects.find(x => x.id === Edits.pid); }
+function edxClip() { const p = edxProject(); return p?.clips.find(x => x.rank === Edits.rank); }
+async function edxSelect(pid, rank) {
+  Edits.pid = pid; Edits.rank = rank; Edits.undo = []; Edits.redo = [];
+  const p = edxProject(), c = edxClip();
+  $('#edx-proj').value = pid;
+  $('#edx-clip').innerHTML = p.clips.map(x => `<option value="${x.rank}" ${x.rank === rank ? 'selected' : ''}>#${x.rank} ${esc(x.title.slice(0, 40))}</option>`).join('');
+  const v = $('#edx-v');
+  const src = p.proxy ? `/api/projects/${pid}/proxy#t=${c.start},${c.end}` : `/source/${p.video_id}#t=${c.start},${c.end}`;
+  v.src = src;
+  $('#edx-s').value = c.start; $('#edx-e').value = c.end;
+  const saved = c.style || {};
+  $('#edx-preset').value = saved.preset || p.settings.caption_style?.preset || 'bold-pop';
+  $('#edx-cust').innerHTML = customizeHTML(saved.overrides || p.settings.caption_style?.overrides, $('#edx-preset').value);
+  mountStyles($('.edside'), $('#edx-preset').value);
+  const lay = c.framing || 'auto';
+  $$('#edx-layout button').forEach(x => x.classList.toggle('on', x.dataset.v === lay));
+  paintShots(c);
+  try {
+    const d = await api(`/api/projects/${pid}/clips/${rank}/transcript?start=${c.start}&end=${c.end}`);
+    Edits.words = d.words;
+    paintEdxWords();
+  } catch (e) { $('#edx-words').innerHTML = `<span class="note">${esc(e.message)}</span>`; }
+  try {
+    const w = await api(`/api/projects/${pid}/waveform`);
+    Edits.wav = w; paintWave();
+  } catch (_) {}
+  edxOverlay();
+  edxSnapshot();
+  edxDirty(false);
+  editCtx = { pid, rank, t: c.start + 1 };
+}
+function paintShots(c) {
+  const box = $('#edx-shots'); if (!box) return;
+  const shots = c.shots || [];
+  box.innerHTML = shots.length ? shots.map((s, i) =>
+    `<span class="shot">#${i + 1} ${fmtT(s.start)}–${fmtT(s.end)} · ${esc(s.layout || 'auto')}</span>`).join('')
+    : '<span class="note">No shot data — layout is automatic.</span>';
+}
+function edxStyle() {
+  return { ...(STYLES.base || {}), ...(STYLES.presets?.[$('#edx-preset')?.value] || {}) };
+}
+function edxOverlay() {
+  const v = $('#edx-v'); if (!v || !Edits.words.length) return;
+  mountLiveCaptions(v, Edits.words, edxStyle(), edxClip()?.start || 0);
+}
+function paintEdxWords() {
+  const box = $('#edx-words'); if (!box) return;
+  box.innerHTML = '';
+  Edits.words.forEach(w => {
+    const inp = document.createElement('input');
+    inp.value = w.t; inp.dataset.i = w.i; inp.size = Math.max(3, w.t.length); inp.dir = 'auto'; inp.title = fmtT(w.s);
+    inp.addEventListener('change', () => { w.t = inp.value; edxChanged(); });
+    box.appendChild(inp);
+  });
+  paintEdxWtl();
+}
+function paintEdxWtl() {
+  const tl = $('#edx-wtl'); if (!tl) return;
+  const c = edxClip(); if (!c) return;
+  const s0 = +$('#edx-s').value || c.start, s1 = +$('#edx-e').value || c.end, span = Math.max(0.1, s1 - s0);
+  tl.innerHTML = '';
+  Edits.words.forEach(w => {
+    const b = document.createElement('div');
+    b.className = 'tlb'; b.title = `${w.t} · ${fmtT(w.s)}`;
+    b.style.left = Math.max(0, (w.s - s0) / span * 100) + '%';
+    b.style.width = Math.max(1.2, (w.e - w.s) / span * 100) + '%';
+    tl.appendChild(b);
+  });
+}
+function paintWave() {
+  const cv = $('#edx-wave'); if (!cv || !Edits.wav?.peaks?.length) return;
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth || 600, H = 64;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  g.clearRect(0, 0, W, H);
+  const peaks = Edits.wav.peaks, n = peaks.length, bw = W / n;
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#fff';
+  g.fillStyle = accent;
+  peaks.forEach((p, i) => { const h = Math.max(1, p * (H - 8)); g.fillRect(i * bw, (H - h) / 2, Math.max(1, bw - 0.5), h); });
+  requestAnimationFrame(edxTick);
+}
+function edxTick() {
+  if (!Edits.active || state.route.name !== 'edits') return;
+  const v = $('#edx-v'), play = $('#edx-play');
+  if (v && play && v.duration) play.style.left = (v.currentTime / v.duration * 100) + '%';
+  if (v && !v.paused) requestAnimationFrame(edxTick);
+}
+function edxSnap() {
+  const words = {};
+  $$('#edx-words input').forEach(i => { words[i.dataset.i] = i.value; });
+  return JSON.stringify({
+    preset: $('#edx-preset')?.value, overrides: collectOverrides($('.edside')),
+    framing: $('#edx-layout .on')?.dataset.v || 'auto',
+    trim: [+$('#edx-s').value, +$('#edx-e').value], words,
+  });
+}
+function edxSnapshot() {
+  const s = edxSnap();
+  const u = Edits.undo;
+  if (!u.length || u[u.length - 1] !== s) { u.push(s); if (u.length > 50) u.shift(); }
+  Edits.redo = [];
+}
+function edxRestore(s) {
+  const o = JSON.parse(s);
+  $('#edx-preset').value = o.preset || 'bold-pop';
+  $('#edx-cust').innerHTML = customizeHTML(o.overrides, o.preset);
+  mountStyles($('.edside'), o.preset);
+  $$('#edx-layout button').forEach(x => x.classList.toggle('on', x.dataset.v === (o.framing || 'auto')));
+  $('#edx-s').value = o.trim[0]; $('#edx-e').value = o.trim[1];
+  $$('#edx-words input').forEach(i => { if (o.words[i.dataset.i] !== undefined) { i.value = o.words[i.dataset.i]; i.size = Math.max(3, i.value.length); } });
+  Edits.words.forEach(w => { if (o.words[w.i] !== undefined) w.t = o.words[w.i]; });
+  paintEdxWtl(); edxOverlay(); repaintHomeCap();
+}
+function edxUndo() {
+  if (Edits.undo.length < 2) return;
+  Edits.redo.push(Edits.undo.pop());
+  edxRestore(Edits.undo[Edits.undo.length - 1]);
+  edxDirty(true);
+}
+function edxRedo() {
+  const s = Edits.redo.pop();
+  if (!s) return;
+  Edits.undo.push(s);
+  edxRestore(s);
+  edxDirty(true);
+}
+function edxDirty(on) {
+  Edits.dirty = !!on;
+  const b = $('#ed-dirty'); if (b) b.hidden = !Edits.dirty;
+}
+function edxChanged() {
+  edxSnapshot(); edxDirty(true); edxOverlay();
+}
+async function edxSave() {
+  const btn = $('#edx-save'); btn.disabled = true;
+  try {
+    const words = {};
+    $$('#edx-words input').forEach(i => { words[i.dataset.i] = i.value; });
+    const np = await api(`/api/projects/${Edits.pid}/clips/${Edits.rank}`, { method: 'PATCH', body: {
+      style: { preset: $('#edx-preset').value, overrides: collectOverrides($('.edside')) },
+      framing: $('#edx-layout .on')?.dataset.v || 'auto',
+      words } });
+    mergeProject(np);
+    Edits.undo = []; Edits.redo = []; edxSnapshot(); edxDirty(false);
+    toast('Saved', 'ok');
+  } catch (e) { toast(e.message, 'bad'); }
+  btn.disabled = false;
+}
+async function edxAccurate() {
+  const v = $('#edx-v'); if (!v) return;
+  const c = edxClip(); if (!c) return;
+  const t = c.start + v.currentTime;
+  const img = $('#edx-img');
+  try {
+    const r = await api(`/api/projects/${Edits.pid}/clips/${Edits.rank}/caption-preview`, { method: 'POST', body: {
+      t, style: { preset: $('#edx-preset').value, overrides: collectOverrides($('.edside')) } } });
+    img.src = r.image; img.hidden = false;
+  } catch (e) { toast(e.message, 'bad'); }
+}
+function edxKeys(e) {
+  if (!Edits.active || state.route.name !== 'edits') return;
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (e.code === 'Space' && !['input', 'textarea', 'select'].includes(tag)) {
+    e.preventDefault();
+    const v = $('#edx-v'); if (v) { v.paused ? v.play().catch(() => {}) : v.pause(); }
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); edxUndo(); }
+  if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); edxRedo(); }
 }
 function mergeProject(np) {
   const i = state.projects.findIndex(x => x.id === np.id); if (i >= 0) state.projects[i] = np; else state.projects.unshift(np);
@@ -1930,6 +2242,14 @@ const actions = {
     try { state.settings = await api('/api/settings', { method: 'PUT', body: {} }); state.opts = null; await refreshSystem(); viewSettings(); toast('Settings reset', 'ok'); } catch (e) { toast(e.message, 'bad'); }
   },
 };
+/* Edits: guard against losing unsaved work (capture phase, before navigation) */
+document.addEventListener('click', e => {
+  const a = e.target.closest?.('a[href^="#/"]');
+  if (a && typeof Edits !== 'undefined' && Edits.dirty && Edits.active) {
+    if (!window.confirm('Discard unsaved edits?')) { e.preventDefault(); e.stopPropagation(); return; }
+    Edits.dirty = false;
+  }
+}, true);
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-act]'); if (!b || b.tagName === 'A' && b.dataset.act === 'dl') return;
   const fn = actions[b.dataset.act]; if (fn) { e.preventDefault(); fn(b); }
@@ -1947,6 +2267,7 @@ function parseRoute() {
   if (h.startsWith('p/')) return { name: 'project', id: h.slice(2) };
   if (h === 'projects') return { name: 'projects' };
   if (h === 'settings') return { name: 'settings' };
+  if (h === 'edits') return { name: 'edits' };
   return { name: 'home' };
 }
 async function render() {
@@ -1955,6 +2276,7 @@ async function render() {
   if (state.route.name === 'home') viewHome();
   else if (state.route.name === 'projects') viewProjects();
   else if (state.route.name === 'project') viewProject();
+  else if (state.route.name === 'edits') viewEdits();
   else if (state.route.name === 'settings') {
     if (state.settings && state.system) {
       viewSettings();   // instant from cache, then revalidate in parallel

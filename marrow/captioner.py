@@ -111,7 +111,7 @@ def group_words(words, max_words=4, max_chars=22, gap=0.6):
 
 
 def generate_ass(words, clip_start, clip_end, output_path, style, res_x=1080, res_y=1920,
-                 margin_v=420, preset=None) -> int:
+                 margin_v=420, preset=None, shots=None) -> int:
     st = resolve_style(preset or style.get("preset"), style.get("overrides"), style)
     clip_words = clean_words(shift_words(words, clip_start, clip_end))
     rtl = is_rtl(clip_words)
@@ -146,6 +146,11 @@ def generate_ass(words, clip_start, clip_end, output_path, style, res_x=1080, re
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     blur = f"{{\\blur{st['blur']}}}" if st["blur"] else ""
+    seam = []
+    if shots:
+        for sh in shots:
+            if sh.get("layout") == "stacked":
+                seam.append((float(sh["s"]), float(sh["e"])))
     raw = []
 
     if st["display"] == "word":
@@ -197,8 +202,18 @@ def generate_ass(words, clip_start, clip_end, output_path, style, res_x=1080, re
                         parts.append(txt)
                 raw.append((w.start, end, blur + " ".join(parts)))  # logical order; libass does the RTL reorder
 
-    events = [f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},Default,,0,0,0,,{body}"
-              for s, e, body in _finalize(raw)]
+    events = []
+    if seam:
+        px, py = res_x // 2, res_y // 2
+        moved = []
+        for s, e, body in raw:
+            mid = (s + e) / 2
+            if any(a <= mid <= b for a, b in seam):
+                body = f"{{\\an5\\pos({px},{py})}}" + body
+            moved.append((s, e, body))
+        raw = moved
+    for s, e, body in _finalize(raw):
+        events.append(f"Dialogue: 0,{format_ass_time(s)},{format_ass_time(e)},Default,,0,0,0,,{body}")
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(header + events) + "\n")
     return len(events)
