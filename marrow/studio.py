@@ -9,27 +9,42 @@ from pathlib import Path
 import numpy as np
 
 from .models import Word
-from .utils import run_ffmpeg
+from .utils import part_path, run_ffmpeg
 
 ENERGY_FPS = 16000 / 512  # must match audio_features.HOP / sample rate
 
 
-def make_strip(src, workdir):
+def _render_atomic(dst, args):
+    """Run ffmpeg into a `.part` file and rename it to `dst` only when it succeeded.
+
+    `+faststart` writes the MP4 index at the very end, so a half-finished file is
+    not playable. Readers (the UI) must therefore only ever see the finished name."""
+    dst = Path(dst)
+    tmp = part_path(dst)
+    try:
+        run_ffmpeg(list(args) + [tmp])
+        os.replace(tmp, dst)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def make_strip(src, workdir, step=3.0, tiles=8):
     """Thumbnail strip for the scan panel (fast tile filter)."""
-    w = Path(workdir)
-    run_ffmpeg(["-i", src, "-vf", "fps=1/3,scale=160:-2,tile=8x1",
-                "-frames:v", "1", w / "strip.jpg"])
+    _render_atomic(Path(workdir) / "strip.jpg",
+                   ["-i", src, "-vf", f"fps=1/{step:.3f},scale=160:-2,tile={tiles}x1",
+                    "-frames:v", "1"])
 
 
 def make_proxy(src, workdir, duration):
     """480p seek-friendly proxy + thumbnail strip for the Live Analysis panel."""
     w = Path(workdir)
-    run_ffmpeg(["-i", src, "-vf", "scale=-2:480,fps=24", "-an", "-c:v", "libx264",
-                "-preset", "ultrafast", "-crf", "30", "-g", "24",
-                "-movflags", "+faststart", w / "proxy.mp4"])
+    _render_atomic(w / "proxy.mp4",
+                   ["-i", src, "-vf", "scale=-2:480,fps=24", "-an", "-c:v", "libx264",
+                    "-preset", "ultrafast", "-crf", "30", "-g", "24", "-movflags", "+faststart"])
     step = max(1, duration / 24)
-    run_ffmpeg(["-i", src, "-vf", f"fps=1/{step:.3f},scale=160:-2,tile=24x1",
-                "-frames:v", "1", w / "strip.jpg"])
+    _render_atomic(w / "strip.jpg",
+                   ["-i", src, "-vf", f"fps=1/{step:.3f},scale=160:-2,tile=24x1",
+                    "-frames:v", "1"])
 
 
 def load_words(workdir):

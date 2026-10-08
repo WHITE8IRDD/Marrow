@@ -26,11 +26,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import __version__, hw, probe, studio
 from .config import deep_merge, load_config
 from .downloader import VIDEO_SUFFIXES, _find_source
-from .utils import ensure_dir, log, probe_duration, slugify
+from .utils import atomic_copy, ensure_dir, log, probe_duration, slugify
 
 mimetypes.add_type("font/ttf", ".ttf")  # Windows registry often lacks this; @font-face needs it
 
 WEB_DIR = Path(__file__).parent / "web"
+STATIC_TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8"}
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "[::1]", "::1"}
 ACTIVE = {"queued", "running"}
 
@@ -233,6 +234,13 @@ def clean_global_settings(raw):
 
 # --------------------------------------------------------------------------- app state
 
+def error_text(e):
+    """What a failed job shows: user-facing messages as written, anything else with its type."""
+    if getattr(e, "user_facing", False):
+        return str(e)[:1500]
+    return f"{type(e).__name__}: {str(e)[:1500]}"
+
+
 class App:
     def __init__(self, home):
         self.home = Path(home).resolve()
@@ -322,7 +330,9 @@ class App:
         clips = []
         for c in p.get("clips", []):
             rev = c.get("rev", 0)
-            files = c.get("files", {})
+            # Live (in-progress) clips store absolute paths; URLs must only carry the file name.
+            files = {pl: Path(str(fn)).name for pl, fn in (c.get("files") or {}).items()}
+            thumb = Path(str(c["thumb"])).name if c.get("thumb") else None
             clips.append({
                 "rank": c["rank"], "start": c["start"], "end": c["end"],
                 "duration": c.get("duration", round(c["end"] - c["start"], 2)),
@@ -332,7 +342,7 @@ class App:
                 "style": c.get("style"),
                 "render_pct": c.get("render_pct", 0.0), "render_eta": c.get("render_eta"),
                 "urls": {pl: f"/media/{vid}/{fn}?v={rev}" for pl, fn in files.items()},
-                "thumb": f"/media/{vid}/{c['thumb']}?v={rev}" if c.get("thumb") else None,
+                "thumb": f"/media/{vid}/{thumb}?v={rev}" if thumb else None,
                 "shots": c.get("shots"),
             })
         clips.sort(key=lambda c: c["rank"])
@@ -381,20 +391,15 @@ class App:
                 raise ApiError("Video preview is not ready yet. Wait for it to finish loading.")
             info = pr["info"]
             source, kind, name = info["url"], "url", info.get("title") or "video"
-            try:  # copy preview/strip now so the scan panel has video instantly
-                import shutil
-
+            try:  # publish the preview as this project's proxy now, so the scan panel has video instantly
                 vid0 = slugify(info.get("video_id") or info["url"])
                 wd = ensure_dir(Path(self.config_for(settings)["cache_dir"]) / vid0)
                 d = Path(pr["dir"])
-                prev = d / "preview.mp4"
-                if not prev.exists():
-                    cs = sorted(d.glob("preview.*"))
-                    prev = cs[0] if cs else None
+                prev = probe.preview_file(d)
                 if prev is not None and not (wd / "proxy.mp4").exists():
-                    shutil.copy(prev, wd / "proxy.mp4")
+                    atomic_copy(prev, wd / "proxy.mp4")
                 if (d / "strip.jpg").exists() and not (wd / "strip.jpg").exists():
-                    shutil.copy(d / "strip.jpg", wd / "strip.jpg")
+                    atomic_copy(d / "strip.jpg", wd / "strip.jpg")
             except Exception:
                 log.exception("Probe copy failed")
         elif upload:
@@ -755,7 +760,7 @@ class App:
         except Exception as e:
             log.exception("Pipeline failed")
             with self.lock:
-                p.update(status="error", stage="Failed", error=f"{type(e).__name__}: {str(e)[:1500]}")
+                p.update(status="error", stage="Failed", error=error_text(e))
                 self._clear_live(p)
                 self._save()
 
@@ -1061,28 +1066,25 @@ class App:
     def _build_proxy(self, pid, src_path, workdir, duration):
         try:
             wd = Path(workdir)
-            if (wd / "proxy.mp4").exists():
-                if not (wd / "strip.jpg").exists():
-                    studio.make_strip(wd / "proxy.mp4", wd)
-                return  # already have both (e.g. regenerate, or copied from a probe)
+            proxy = wd / "proxy.mp4"
+            if proxy.exists():
+                if not _playable(proxy):  # e.g. left half-written by an older build
+                    proxy.unlink(missing_ok=True)
+                else:
+                    if not (wd / "strip.jpg").exists():
+                        studio.make_strip(proxy, wd)
+                    return  # already have both (e.g. regenerate, or copied from a probe)
             with self.lock:
                 p = self.projects.get(pid)
             if p and p.get("probe_id"):
                 pr = probe.get(p["probe_id"])
-                if pr:
-                    import shutil
-
-                    d = Path(pr["dir"])
-                    prev = d / "preview.mp4"
-                    if not prev.exists():
-                        c = sorted(d.glob("preview.*"))
-                        prev = c[0] if c else None
-                    if prev:
-                        shutil.copy(prev, wd / "proxy.mp4")
-                        st = d / "strip.jpg"
-                        if st.exists():
-                            shutil.copy(st, wd / "strip.jpg")
-                        return
+                prev = probe.preview_file(Path(pr["dir"])) if pr else None
+                if prev is not None:
+                    atomic_copy(prev, proxy)
+                    st = Path(pr["dir"]) / "strip.jpg"
+                    if st.exists():
+                        atomic_copy(st, wd / "strip.jpg")
+                    return
             studio.make_proxy(src_path, workdir, duration)
         except Exception:
             log.exception("Proxy build failed")
@@ -1138,6 +1140,13 @@ class App:
             "gpu": False,
             "gpu_error": None,
         }
+        try:  # YouTube setup: yt-dlp version, JavaScript runtime, solver and cookies
+            from . import diagnostics
+
+            info["ytdlp"] = diagnostics.ytdlp_status()
+            info["cookies"] = diagnostics.cookie_status(cfg["cookies"])
+        except Exception as e:  # a broken check must never hide the rest of the status
+            info["ytdlp"], info["cookies"] = {"error": f"{type(e).__name__}: {e}"}, {}
         try:
             from .transcriber import cuda_ready
 
@@ -1277,9 +1286,9 @@ class Handler(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
         return host in LOOPBACK_HOSTS
 
-    def send_file(self, path, download_name=None, delete_after=False):
+    def send_file(self, path, download_name=None, delete_after=False, ctype=None):
         size = path.stat().st_size
-        ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        ctype = ctype or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         start, end, status = 0, size - 1, 200
         rng = self.headers.get("Range")
         if rng:
@@ -1615,7 +1624,7 @@ def r_probe_start(h, q):
     url = str(h.read_json().get("url") or "").strip()
     if not re.match(r"^https?://", url, re.I):
         raise ApiError("Paste a valid http(s) video link.")
-    h.send_json({"id": probe.start(url, h.app.probes)}, 202)
+    h.send_json({"id": probe.start(url, h.app.probes, h.app.config_for())}, 202)
 
 
 @route("GET", r"/api/probe/([0-9a-f]+)")
@@ -1649,11 +1658,10 @@ def r_probe_preview(h, q, pid):
     pr = probe.get(pid)
     if not pr:
         raise ApiError("Probe not found", 404)
-    d = Path(pr["dir"])
-    cands = sorted(d.glob("preview.*"))
-    if pr["state"] != "ready" or not cands:
+    found = probe.preview_file(Path(pr["dir"])) if pr["state"] == "ready" else None
+    if found is None:
         raise ApiError("Not ready yet", 404)
-    path = cands[0].resolve()
+    path = found.resolve()
     if h.app.probes.resolve() not in path.parents:
         raise ApiError("Not found", 404)
     h.send_file(path)
@@ -1705,6 +1713,23 @@ def r_source(h, q, vid):
 
 
 # --------------------------------------------------------------------------- entry point
+
+def _playable(path):
+    """True when ffprobe can read a duration from `path` (a finished, valid media file)."""
+    try:
+        return probe_duration(path) > 0
+    except Exception:
+        return False
+
+
+@route("GET", r"/static/([\w.\-]+)")
+def r_static(h, q, fname):
+    ctype = STATIC_TYPES.get(Path(fname).suffix.lower())
+    path = (WEB_DIR / fname).resolve()
+    if not ctype or WEB_DIR.resolve() not in path.parents or not path.is_file():
+        raise ApiError("File not found", 404)
+    h.send_file(path, ctype=ctype)
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="marrow-ui", description="Marrow web interface")

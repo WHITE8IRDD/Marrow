@@ -15,7 +15,7 @@ def test_ydl_opts_cookies_retries_resume():
     assert o["retry_sleep_functions"]["http"](10) == 30
     o2 = ydl_opts({})
     assert "cookiesfrombrowser" not in o2 and "cookiefile" not in o2
-    assert FORMAT_LADDER[0].startswith("bv*") and "web" in PLAYER_CLIENTS and "android" in PLAYER_CLIENTS
+    assert FORMAT_LADDER[0].startswith("bv*") and None in PLAYER_CLIENTS and ["tv_downgraded"] in PLAYER_CLIENTS
 
 
 def test_error_clears_live_state(tmp_path):

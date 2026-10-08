@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -11,6 +12,23 @@ def ensure_dir(path) -> Path:
     p = Path(path)
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def part_path(dst) -> Path:
+    """Temp name beside `dst` that keeps the extension (ffmpeg picks the muxer from it)."""
+    dst = Path(dst)
+    return dst.with_name(f"{dst.stem}.part{dst.suffix}")
+
+
+def atomic_copy(src, dst) -> None:
+    """Copy so that `dst` only appears once it is complete (readers never see a partial file)."""
+    dst = Path(dst)
+    tmp = part_path(dst)
+    try:
+        shutil.copyfile(src, tmp)
+        os.replace(tmp, dst)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def slugify(text: str) -> str:
