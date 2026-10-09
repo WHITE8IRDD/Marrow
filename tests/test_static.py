@@ -24,9 +24,37 @@ def test_app_assets_are_served_with_module_safe_types(base):
     with urllib.request.urlopen(base + "/static/app.js") as r:
         assert r.status == 200
         assert r.headers["Content-Type"].startswith("text/javascript")
-        assert b"function viewHome" in r.read()
+        content = r.read()
+        assert b"function viewHome" in content
+        assert b"function updateHomePreview" in content
+        assert b"function renderLiveCaption" in content
+        assert b"function openPreviewModal" in content
+        assert b"homePrevBg" in content
+        assert b"prev-controls" in content
     with urllib.request.urlopen(base + "/static/app.css") as r:
         assert r.headers["Content-Type"].startswith("text/css")
+        css_content = r.read()
+        assert b".prev-bg" in css_content
+        assert b".layout-blur_fit" in css_content
+        assert b".prev-modal-wrap" in css_content
+        assert b"prevSlowZoom" in css_content
+
+
+def test_caption_styles_api(base):
+    import json
+    with urllib.request.urlopen(base + "/api/caption-styles") as r:
+        assert r.status == 200
+        data = json.loads(r.read().decode("utf-8"))
+        assert "base" in data
+        assert "presets" in data
+        assert "bold-pop" in data["presets"]
+        assert "hormozi" in data["presets"]
+        assert "beast" in data["presets"]
+        assert "clean" in data["presets"]
+        assert "pill" in data["presets"]
+        assert "neon" in data["presets"]
+        assert "box" in data["presets"]
+        assert "arabic" in data["presets"]
 
 
 def test_static_route_refuses_other_files(base):

@@ -174,8 +174,40 @@ function openModal(html, wide) {
   b.addEventListener('mousedown', e => { if (e.target === b) closeModal(); });
   $('#modal-root').appendChild(b); return b.firstChild;
 }
-function closeModal() { const r = $('#modal-root'); const v = $('video', r); if (v) v.pause(); r.innerHTML = ''; editCtx = null; refreshLiveOverlay = null; }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+function closeModal() {
+  const r = $('#modal-root');
+  const mv = $('#modalPrev', r);
+  const hp = $('#homePrev');
+  if (mv && hp) {
+    try {
+      hp.currentTime = mv.currentTime;
+      const bg = $('#homePrevBg');
+      if (bg) bg.currentTime = mv.currentTime;
+      if (!mv.paused) {
+        hp.play().catch(() => {});
+        bg?.play().catch(() => {});
+        updatePlayButtonIcons(false);
+      }
+    } catch (_) {}
+  }
+  const v = $('video', r);
+  if (v) v.pause();
+  r.innerHTML = '';
+  editCtx = null;
+  refreshLiveOverlay = null;
+  updateHomePreview();
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+  if (e.code === 'Space' && $('#modalPrev') && !e.target.matches('input,select,textarea,button')) {
+    e.preventDefault();
+    const mv = $('#modalPrev'), mvb = $('#modalPrevBg');
+    if (mv) {
+      if (mv.paused) { mv.play().catch(() => {}); mvb?.play().catch(() => {}); }
+      else { mv.pause(); mvb?.pause(); }
+    }
+  }
+});
 function confirmBox({ title, text, ok = 'Confirm', danger = false, check = null }) {
   return new Promise(res => {
     const m = openModal(`<h3>${esc(title)}</h3><p class="desc">${esc(text)}</p>
@@ -190,36 +222,80 @@ function confirmBox({ title, text, ok = 'Confirm', danger = false, check = null 
 const seg = (key, items, val) => `<div class="seg" data-opt="${key}">${items.map(([v, l]) =>
   `<button type="button" class="${v === val ? 'on' : ''}" data-v="${v}" data-act="seg">${l}</button>`).join('')}</div>`;
 const tog = (key, label, on, hint) => `<label class="tog"><input type="checkbox" data-opt="${key}" ${on ? 'checked' : ''}><span class="knob"></span><span class="tl">${label}${hint ? `<small>${hint}</small>` : ''}</span></label>`;
+
+const FONT_OPTIONS = [
+  'Montserrat ExtraBold',
+  'Anton',
+  'Bebas Neue',
+  'Poppins SemiBold',
+  'Poppins',
+  'Inter',
+  'Cairo',
+  'Tajawal',
+  'Noto Sans Arabic',
+  'Arial'
+];
+
 function customizeHTML(ov, presetKey) {
   ov = ov || {};
   const p = { ...(STYLES.base || {}), ...(STYLES.presets?.[presetKey] || {}) };
   const display = ov.display || p.display || 'line';
   const wordMode = display === 'word';
   const wc = ov.word_colors || p.word_colors || [];
-  const fams = ['Arial', ...new Set(Object.values(STYLES.presets || {}).flatMap(x => [x.font, x.font_ar]).filter(Boolean))];
+  const fams = ['Arial', ...new Set([
+    ...FONT_OPTIONS,
+    ...Object.values(STYLES.presets || {}).flatMap(x => [x.font, x.font_ar]).filter(Boolean)
+  ])];
   const font = ov.font || '';
   const pos = ov.position || p.position || 'lower';
   const size = ov.font_size || ov.size || '';
   const ovSeg = (key, items, val, dense) => `<div class="seg${dense ? ' dense' : ''}" data-ov="${key}">${items.map(([v, l]) =>
     `<button type="button" class="${String(v) === String(val) ? 'on' : ''}" data-v="${v}" data-act="seg">${l}</button>`).join('')}</div>`;
   return `<div class="cfg2">
-    <div class="cell"><label>Text size</label><div class="row"><input type="range" min="40" max="110" data-ov="font_size" data-unit="" value="${size || 72}" ${size ? '' : 'data-auto="1"'}><output>${size || 'auto'}</output></div></div>
-    <div class="cell"><label>Uppercase</label><label class="tog compact"><input type="checkbox" data-ov="uppercase" ${ov.uppercase === false ? '' : 'checked'}><span class="knob"></span></label></div>
+    <div class="cell"><label>Text size</label><div class="row"><input type="range" min="40" max="110" data-ov="font_size" data-unit="" value="${size || p.size || 72}" ${size ? '' : 'data-auto="1"'}><output>${size || p.size || 'auto'}</output></div></div>
+    <div class="cell"><label>Uppercase</label><label class="tog compact"><input type="checkbox" data-ov="uppercase" ${ov.uppercase === false || (ov.uppercase === undefined && p.uppercase === false) ? '' : 'checked'}><span class="knob"></span></label></div>
     <div class="cell"><label>Display</label>${ovSeg('display', [['line', 'Line'], ['word', 'Word']], wordMode ? 'word' : 'line')}</div>
-    <div class="cell"><label>Font</label><select data-ov="font"><option value="">Style default</option>${fams.map(f => `<option ${f === font ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
+    <div class="cell"><label>Font</label><select data-ov="font"><option value="">Style default (${p.font || 'Preset'})</option>${fams.map(f => `<option ${f === font ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
     <div class="cell"><label>Outline</label>${ovSeg('outline', [['', 'Auto'], ...[0, 1, 2, 3, 4, 5, 6, 7, 8].map(n => [n, String(n)])], ov.outline == null ? '' : ov.outline, true)}</div>
     <div class="cell"><label>Words per line</label>${ovSeg('max_words_per_line', [['', 'Auto'], [1, '1'], [2, '2'], [3, '3']], ov.max_words_per_line == null ? '' : ov.max_words_per_line)}</div>
     <div class="cell"><label>Position</label>${ovSeg('position', [['lower', 'Bottom'], ['center', 'Center'], ['top', 'Top']], pos)}</div>
-    <div class="cell"><label>Pop animation</label><label class="tog compact"><input type="checkbox" data-ov="anim_pop" ${ov.anim === 'none' ? '' : 'checked'}><span class="knob"></span></label></div>
-    <div class="cell"><label>Highlight color</label><div class="row"><input type="color" data-ov="highlight_color" value="${ov.highlight_color || p.highlight_color || '#FFE600'}"><span class="hint mono">${ov.highlight_color || ''}</span></div></div>
-    <div class="cell"><label>Text color</label><div class="row"><input type="color" data-ov="text_color" value="${ov.text_color || p.text_color || '#FFFFFF'}"><span class="hint mono">${ov.text_color || ''}</span></div></div>
-    ${wordMode ? `<div class="cell"><label>Word colors</label><div class="wcols">${[0, 1, 2].map(i => `<input type="color" data-ov-list="word_colors" value="${wc[i] || p.highlight_color || '#FFE600'}">`).join('')}</div></div>` : ''}
+    <div class="cell"><label>Pop animation</label><label class="tog compact"><input type="checkbox" data-ov="anim_pop" ${ov.anim === 'none' || (ov.anim === undefined && p.anim === 'none') ? '' : 'checked'}><span class="knob"></span></label></div>
+    <div class="cell"><label>Highlight color</label><div class="row"><input type="color" data-ov="highlight_color" value="${ov.highlight_color || p.highlight_color || '#FFE600'}"><span class="hint mono">${ov.highlight_color || p.highlight_color || '#FFE600'}</span></div></div>
+    <div class="cell"><label>Text color</label><div class="row"><input type="color" data-ov="text_color" value="${ov.text_color || p.text_color || '#FFFFFF'}"><span class="hint mono">${ov.text_color || p.text_color || '#FFFFFF'}</span></div></div>
+    ${wordMode ? `<div class="cell"><label>Word colors</label><div class="wcols">${[0, 1, 2].map(i => `<input type="color" data-ov-list="word_colors" value="${wc[i] || (i === 0 ? (ov.highlight_color || p.highlight_color || '#FFE600') : i === 1 ? '#FFFFFF' : '#00F060')}">`).join('')}</div></div>` : ''}
     ${wordMode ? `<div class="cell"><label>Strip punctuation</label><label class="tog compact"><input type="checkbox" data-ov="strip_punct" ${ov.strip_punct === false ? '' : 'checked'}><span class="knob"></span></label></div>` : ''}
   </div>`;
 }
-/* Home's caption-style block: the preset carousel plus a live 9:16 phone preview on the right. */
+/* Home's caption-style block: the preset carousel plus an interactive live 9:16 phone preview on the right. */
 function styleSectionHTML(preset) {
-  return stylePickerHTML(preset, `<div class="phone" id="homePhone"><video id="homePrev" muted playsinline loop preload="auto"></video><div class="livecap cap" id="homeCap" style="display:none"></div><p class="phone-empty" id="homePrevNote">Find a video to preview this style on real frames</p></div>`);
+  return stylePickerHTML(preset, `
+    <div class="phone preview-phone layout-crop" id="homePhone" role="region" aria-label="Real-time video preview">
+      <video id="homePrevBg" class="prev-bg" muted playsinline loop preload="auto"></video>
+      <video id="homePrev" class="prev-fg" muted playsinline loop preload="auto"></video>
+      <div class="phone-placeholder" id="homePrevPlaceholder">
+        <div class="ph-backdrop"><div class="ph-glow"></div><div class="ph-grid"></div></div>
+        <div class="ph-badge">${ico('sparkle')}<span>Live Preview</span></div>
+        <p class="phone-empty" id="homePrevNote">Paste a link or drop a video to preview on real frames</p>
+      </div>
+      <div class="livecap cap" id="homeCap"></div>
+      <div class="prev-top-bar" aria-hidden="true">
+        <span class="prev-badge ratio-badge">9:16</span>
+        <span class="prev-badge frame-badge" id="prevFrameBadge">Crop</span>
+        <span class="prev-badge style-badge" id="prevStyleBadge">Bold Pop</span>
+      </div>
+      <div class="prev-controls">
+        <button type="button" class="prev-ctrl-btn" id="homePrevPlayBtn" title="Play / Pause" aria-label="Play or pause preview">
+          <svg class="i" viewBox="0 0 24 24" fill="currentColor">${ICON.play}</svg>
+        </button>
+        <button type="button" class="prev-ctrl-btn" id="homePrevMuteBtn" title="Mute / Unmute" aria-label="Toggle mute">
+          <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+        </button>
+        <button type="button" class="prev-ctrl-btn prev-expand-btn" id="homePrevExpandBtn" title="Expand preview (Larger / Fullscreen inspection)" aria-label="Expand preview">
+          ${ico('expand')}
+        </button>
+      </div>
+    </div>
+  `);
 }
 function optsPanel(o, compact) {
   const cs = o.caption_style || { preset: 'bold-pop', overrides: {} };
@@ -255,6 +331,8 @@ function readStyleRoot(root) {
   $$('[data-ov]', root).forEach(el => {
     const k = el.dataset.ov;
     if (k === 'anim_pop') { o.overrides.anim = el.checked ? 'pop' : 'none'; return; }
+    if (k === 'uppercase') { o.overrides.uppercase = el.checked; return; }
+    if (k === 'strip_punct') { o.overrides.strip_punct = el.checked; return; }
     if (el.dataset.auto) return;                 // a slider nobody touched keeps the style default
     let v;
     if (el.classList.contains('seg')) v = $('.on', el)?.dataset.v;
@@ -264,10 +342,11 @@ function readStyleRoot(root) {
     if (v === undefined || v === null) return;
     o.overrides[k] = v;
   });
+  const wc = [];
   $$('[data-ov-list="word_colors"]', root).forEach(el => {
-    const cols = [el.value].filter(Boolean);
-    if (cols.length) o.overrides.word_colors = (o.overrides.word_colors || []).concat(cols).slice(0, 6);
+    if (el.value) wc.push(el.value);
   });
+  if (wc.length) o.overrides.word_colors = wc;
   return o;
 }
 
@@ -305,36 +384,72 @@ function readOpts(root) {
 const SAMPLES = { en: ['MAKE', 'IT', 'GO', 'VIRAL'], ar: ['اجعل', 'فيديوك', 'ينتشر', 'الآن'] };
 let STYLES = { base: {}, presets: {} }, sampleLang = 'en', tickIdx = 0;
 /* Hardcoded fallback so the carousel never renders blank (used until /api/caption-styles loads, or if it fails) */
-const FALLBACK_BASE = { font: 'Arial', font_ar: 'Arial', size: 72, bold: true, uppercase: true,
+const FALLBACK_BASE = { font: 'Montserrat ExtraBold', font_ar: 'Cairo', size: 72, bold: true, uppercase: true,
   text_color: '#FFFFFF', highlight_color: '#FFE600', outline_color: '#000000', outline: 4, shadow: 2,
-  highlight_mode: 'color', pill_color: '#FFFFFF', pill_text: '#000000', active_scale: 110 };
+  highlight_mode: 'color', pill_color: '#FFFFFF', pill_text: '#000000', active_scale: 110, position: 'lower', display: 'line', anim: 'pop' };
 const FALLBACK_PRESETS = {
-  'bold-pop': { label: 'Bold Pop', font: 'Montserrat', highlight_color: '#FFE600' },
-  'hormozi': { label: 'Hormozi', font: 'Anton', highlight_color: '#00F060' },
-  'beast': { label: 'Beast', font: 'Bebas Neue', highlight_color: '#FF3B30' },
-  'clean': { label: 'Clean', font: 'Poppins', highlight_color: '#A78BFA' },
-  'pill': { label: 'Pill', font: 'Poppins', highlight_color: '#FFFFFF' },
-  'neon': { label: 'Neon', font: 'Poppins', highlight_color: '#22E5FF' },
-  'box': { label: 'Box', font: 'Inter', highlight_color: '#FFD60A' },
+  'bold-pop': { label: 'Bold Pop', font: 'Montserrat ExtraBold', font_file: 'Montserrat-ExtraBold.ttf', font_ar: 'Cairo', font_ar_file: 'Cairo-Bold.ttf', outline: 5, highlight_color: '#FFE600' },
+  'hormozi': { label: 'Hormozi', font: 'Anton', font_file: 'Anton-Regular.ttf', font_ar: 'Tajawal', font_ar_file: 'Tajawal-ExtraBold.ttf', highlight_color: '#00F060', size: 84, outline: 6, max_words_per_line: 3, position: 'center', active_scale: 115 },
+  'beast': { label: 'Beast', font: 'Bebas Neue', font_file: 'BebasNeue-Regular.ttf', font_ar: 'Cairo', font_ar_file: 'Cairo-Bold.ttf', highlight_color: '#FF3B30', size: 104, outline: 7, max_words_per_line: 3, position: 'center', active_scale: 125 },
+  'clean': { label: 'Clean', font: 'Poppins SemiBold', font_file: 'Poppins-SemiBold.ttf', font_ar: 'Noto Sans Arabic', font_ar_file: 'NotoSansArabic-Bold.ttf', uppercase: false, highlight_color: '#A78BFA', outline: 0, shadow: 4, size: 64, anim: 'none' },
+  'pill': { label: 'Pill', font: 'Poppins', font_file: 'Poppins-Bold.ttf', font_ar: 'Cairo', font_ar_file: 'Cairo-Bold.ttf', highlight_mode: 'pill', pill_color: '#FFFFFF', pill_text: '#000000', outline: 3, uppercase: false },
+  'neon': { label: 'Neon', font: 'Poppins', font_file: 'Poppins-Bold.ttf', font_ar: 'Cairo', font_ar_file: 'Cairo-Bold.ttf', highlight_color: '#22E5FF', outline_color: '#0077CC', outline: 3, shadow: 3 },
+  'box': { label: 'Box', font: 'Inter', font_file: 'Inter-Bold.ttf', font_ar: 'Noto Sans Arabic', font_ar_file: 'NotoSansArabic-Bold.ttf', box: true, box_opacity: 65, outline: 4, shadow: 0, uppercase: false, highlight_color: '#FFD60A', size: 60 },
+  'arabic': { label: 'Arabic Bold', font: 'Cairo', font_file: 'Cairo-Bold.ttf', font_ar: 'Cairo', font_ar_file: 'Cairo-Bold.ttf', uppercase: false, highlight_color: '#FFE600', size: 76 },
+  'one-word': { label: 'One Word', display: 'word', font: 'Montserrat ExtraBold', font_file: 'Montserrat-ExtraBold.ttf', font_ar: 'Cairo', font_ar_file: 'Cairo-Bold.ttf', size: 104, position: 'center', outline: 7, uppercase: true, highlight_color: '#FFE600', word_colors: ['#FFE600', '#FFFFFF', '#00F060'], max_words_per_line: 1 },
+  'one-word-clean': { label: 'One Word Clean', display: 'word', font: 'Poppins', font_file: 'Poppins-Bold.ttf', font_ar: 'Cairo', font_ar_file: 'Cairo-Bold.ttf', size: 96, position: 'lower', outline: 0, shadow: 6, uppercase: false, highlight_color: '#FFFFFF', word_colors: ['#FFFFFF'], max_words_per_line: 1 }
 };
 STYLES = { base: FALLBACK_BASE, presets: FALLBACK_PRESETS };
+
+const FONT_MAP = {
+  'Montserrat ExtraBold': 'Montserrat-ExtraBold.ttf',
+  'Montserrat': 'Montserrat-ExtraBold.ttf',
+  'Anton': 'Anton-Regular.ttf',
+  'Bebas Neue': 'BebasNeue-Regular.ttf',
+  'Poppins SemiBold': 'Poppins-SemiBold.ttf',
+  'Poppins': 'Poppins-Bold.ttf',
+  'Inter': 'Inter-Bold.ttf',
+  'Cairo': 'Cairo-Bold.ttf',
+  'Tajawal': 'Tajawal-ExtraBold.ttf',
+  'Noto Sans Arabic': 'NotoSansArabic-Bold.ttf',
+};
+
 function injectFonts(presets) {
-  const seen = new Set(); let css = '';
-  Object.values(presets).forEach(p => [[p.font, p.font_file], [p.font_ar, p.font_ar_file]].forEach(([fam, file]) => {
-    if (fam && file && !seen.has(fam)) { seen.add(fam); css += `@font-face{font-family:'${fam}';src:url('/fonts/${file}')}`; }
-  }));
-  document.head.insertAdjacentHTML('beforeend', `<style>${css}</style>`);
+  const seen = new Set();
+  let css = '';
+  const pairs = Object.entries(FONT_MAP);
+  if (presets) {
+    Object.values(presets).forEach(p => {
+      if (p.font && p.font_file) pairs.push([p.font, p.font_file]);
+      if (p.font_ar && p.font_ar_file) pairs.push([p.font_ar, p.font_ar_file]);
+    });
+  }
+  pairs.forEach(([fam, file]) => {
+    if (fam && file && !seen.has(fam)) {
+      seen.add(fam);
+      css += `@font-face{font-family:'${fam}';src:url('/fonts/${file}') format('truetype');font-display:swap;}\n`;
+    }
+  });
+  let styleEl = document.getElementById('marrow-fonts');
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = 'marrow-fonts';
+    document.head.appendChild(styleEl);
+  }
+  styleEl.textContent = css;
 }
+injectFonts(FALLBACK_PRESETS);
+
 function wordSpans(p, lang) {
   const ar = lang === 'ar';
-  return SAMPLES[lang].map(w => `<span class="w" data-hl="${p.highlight_color}" data-pill="${p.highlight_mode === 'pill' ? p.pill_color : ''}" data-pt="${p.pill_text}" data-sc="${p.active_scale}" style="color:${p.text_color}">${ar || !p.uppercase ? w : w.toUpperCase()}</span>`).join(' ');
+  return SAMPLES[lang].map(w => `<span class="w" data-hl="${p.highlight_color}" data-pill="${p.highlight_mode === 'pill' ? p.pill_color : ''}" data-pt="${p.pill_text}" data-sc="${p.active_scale || 110}" style="color:${p.text_color}">${ar || !p.uppercase ? w : w.toUpperCase()}</span>`).join(' ');
 }
 function prevStyle(p) {
-  const fam = (sampleLang === 'ar' ? p.font_ar : p.font) || 'Arial';
-  const stroke = p.outline ? `-webkit-text-stroke:1px ${p.outline_color};paint-order:stroke fill;` : '';
+  const fam = (sampleLang === 'ar' ? (p.font_ar || p.font) : (p.font || p.font_ar)) || 'Arial';
+  const stroke = p.outline ? `-webkit-text-stroke:1px ${p.outline_color || '#000'};paint-order:stroke fill;` : '';
   const shadow = p.shadow ? `text-shadow:0 1px 2px #000a;` : '';
-  const boxed = p.box ? `background:${p.box_color};padding:0 .3em;border-radius:.2em;` : '';
-  return `font-family:'${fam}',Arial;font-weight:${p.bold ? 700 : 400};${stroke}${shadow}${boxed}`;
+  const boxed = p.box ? `background:${p.box_color || '#000'};padding:0 .3em;border-radius:.2em;` : '';
+  return `font-family:'${fam}',Arial,sans-serif;font-weight:${p.bold !== false ? 700 : 400};${stroke}${shadow}${boxed}`;
 }
 function prevWords(p) {
   return p.display === 'word'
@@ -382,24 +497,632 @@ function scrollCarousel(direction) {
   const track = document.querySelector('.carousel-track');
   if (track) track.scrollBy({ left: direction * 250, behavior: 'smooth' });
 }
-function repaintHomeCap() {
-  const cap = $('#homeCap'); if (!cap) return;
-  const hasVideo = ($('#homePrev')?.src || '').startsWith('blob:') || ($('#homePrev')?.currentSrc || '').startsWith('http');
-  if (!hasVideo && !Home.probeReady) { cap.style.display = 'none'; return; }
-  const key = $('#styleCard .stylePreset')?.value || 'bold-pop';
-  const p = { ...STYLES.base, ...STYLES.presets[key] };
-  if (!p || !p.size) return;
-  const ar = sampleLang === 'ar';
-  const fam = ar ? p.font_ar : p.font, S = n => `calc(${n} * 100cqw / 1080)`;
-  const stroke = p.outline ? `-webkit-text-stroke:${S(p.outline * 2)} ${p.outline_color};paint-order:stroke fill;` : '';
-  const shadow = p.shadow ? `text-shadow:0 ${S(p.shadow * 1.5)} ${S(p.shadow * 2)} #000a;` : '';
-  const boxed = p.box ? `background:${p.box_color}${Math.round(p.box_opacity * 2.55).toString(16).padStart(2, '0')};padding:.1em .4em;border-radius:.2em;` : '';
-  const pos = p.position === 'center' ? 'top:42%' : p.position === 'top' ? 'top:14%' : 'bottom:16%';
-  cap.setAttribute('style', `display:block;${pos};font-family:'${fam}',Arial;font-size:${S(p.size)};font-weight:${p.bold ? 700 : 400};${stroke}${shadow}${boxed}`);
-  cap.innerHTML = p.display === 'word'
-    ? `<span class="w solo" data-words="${SAMPLES[sampleLang].join(',')}" data-hl="${p.highlight_color}" data-pill="${p.highlight_mode === 'pill' ? p.pill_color : ''}" data-pt="${p.pill_text}" data-sc="115" style="color:${p.highlight_color}">${SAMPLES[sampleLang][0]}</span>`
-    : wordSpans(p, sampleLang);
+
+function getResolvedStyle(scope) {
+  scope = scope || document.getElementById('styleCard') || document;
+  const key = $('.stylePreset', scope)?.value || state.opts?.caption_style?.preset || 'bold-pop';
+  const base = STYLES.base || FALLBACK_BASE;
+  const preset = (STYLES.presets && STYLES.presets[key]) || FALLBACK_PRESETS[key] || {};
+  const overrides = readStyleRoot(scope).overrides || {};
+  return {
+    ...base,
+    ...preset,
+    ...overrides,
+    presetKey: key,
+    label: preset.label || key
+  };
 }
+
+function renderLiveCaption(capEl, st, lang = sampleLang, tick = tickIdx) {
+  if (!capEl) return;
+  const optBox = document.getElementById('optbox') || document;
+  const opts = readOpts(optBox);
+  if (opts.captions === false) {
+    capEl.classList.add('cap-off');
+    capEl.style.display = 'none';
+    return;
+  }
+  capEl.classList.remove('cap-off');
+
+  const ar = (lang === 'ar');
+  const fam = (ar ? (st.font_ar || st.font || 'Cairo') : (st.font || st.font_ar || 'Montserrat ExtraBold'));
+  const S = n => `calc(${n} * 100cqw / 1080)`;
+  
+  const pos = st.position === 'center' ? 'top:50%;bottom:auto;transform:translateY(-50%);'
+            : st.position === 'top' ? 'top:14%;bottom:auto;transform:none;'
+            : 'bottom:15%;top:auto;transform:none;';
+            
+  const outW = (st.outline !== undefined && st.outline !== '') ? Number(st.outline) : 0;
+  const outCol = st.outline_color || '#000000';
+  const stroke = outW > 0 ? `-webkit-text-stroke:${S(outW * 2)} ${outCol};paint-order:stroke fill;` : '-webkit-text-stroke:0;';
+  
+  const shVal = (st.shadow !== undefined && st.shadow !== '') ? Number(st.shadow) : 0;
+  const shadow = shVal > 0 ? `text-shadow:0 ${S(shVal * 1.5)} ${S(shVal * 2.5)} rgba(0,0,0,0.85);` : 'text-shadow:none;';
+  
+  let boxed = '';
+  if (st.box) {
+    const boxCol = st.box_color || '#000000';
+    const boxOp = st.box_opacity !== undefined ? Number(st.box_opacity) : 60;
+    const hexOp = Math.round(Math.max(0, Math.min(100, boxOp)) * 2.55).toString(16).padStart(2, '0');
+    boxed = `background:${boxCol}${hexOp};padding:.18em .45em;border-radius:.25em;backdrop-filter:blur(4px);`;
+  }
+  
+  const isBold = st.bold !== false;
+  const fontStyle = st.italic ? 'italic' : 'normal';
+  const fontWeight = isBold ? 700 : (st.font_weight || 400);
+  const fontSize = st.font_size || st.size || 72;
+  const isUpper = !ar && (st.uppercase !== false);
+  const textTransform = isUpper ? 'uppercase' : 'none';
+
+  capEl.setAttribute('style', `display:block;${pos};font-family:'${fam}',sans-serif;font-size:${S(fontSize)};font-weight:${fontWeight};font-style:${fontStyle};text-transform:${textTransform};${stroke}${shadow}${boxed}`);
+
+  const rawWords = SAMPLES[lang] || SAMPLES.en;
+  const words = isUpper ? rawWords.map(w => w.toUpperCase()) : rawWords;
+  const activeScale = st.anim === 'none' ? 1.0 : ((st.active_scale || 110) / 100);
+  const hlColor = st.highlight_color || '#FFE600';
+  const textColor = st.text_color || '#FFFFFF';
+  const isPill = st.highlight_mode === 'pill';
+  const pillBg = st.pill_color || '#FFFFFF';
+  const pillTxt = st.pill_text || '#000000';
+  const wordColors = (st.word_colors && st.word_colors.length) ? st.word_colors : [hlColor];
+
+  if (st.display === 'word') {
+    const curIdx = tick % words.length;
+    let wordText = words[curIdx];
+    if (st.strip_punct) wordText = wordText.replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, '');
+    const curColor = wordColors[curIdx % wordColors.length] || hlColor;
+    const pillStyle = isPill ? `background:${pillBg};color:${pillTxt};border-radius:.25em;padding:0 .28em;` : `color:${curColor};`;
+    const scaleStyle = st.anim !== 'none' ? `transform:scale(${activeScale});` : `transform:scale(1);`;
+    capEl.innerHTML = `<span class="w solo" style="${pillStyle}${scaleStyle}">${wordText}</span>`;
+  } else {
+    const mw = (st.max_words_per_line !== undefined && st.max_words_per_line !== '') ? Number(st.max_words_per_line) : 4;
+    const activeWordIdx = tick % words.length;
+    let html = '';
+    words.forEach((w, i) => {
+      if (i > 0 && mw > 0 && i % mw === 0) {
+        html += '<span class="line-break"></span>';
+      }
+      const on = (i === activeWordIdx);
+      let spanStyle = '';
+      if (on) {
+        if (isPill) {
+          spanStyle = `background:${pillBg};color:${pillTxt};border-radius:.25em;padding:0 .28em;`;
+        } else {
+          spanStyle = `color:${hlColor};`;
+        }
+        if (st.anim !== 'none') {
+          spanStyle += `transform:scale(${activeScale});`;
+        }
+      } else {
+        spanStyle = `color:${textColor};transform:scale(1);`;
+      }
+      html += `<span class="w ${on ? 'active-w' : ''}" style="${spanStyle}">${w}</span> `;
+    });
+    capEl.innerHTML = html.trim();
+  }
+}
+
+function updateHomePreview() {
+  const root = document.getElementById('styleCard') || document;
+  const optBox = document.getElementById('optbox') || document;
+  const o = readOpts(optBox);
+  const st = getResolvedStyle(root);
+
+  // 1. Small phone preview
+  const phone = document.getElementById('homePhone');
+  if (phone) {
+    const isBlurFit = (o.layout === 'blur_fit');
+    phone.classList.toggle('layout-blur_fit', isBlurFit);
+    phone.classList.toggle('layout-crop', !isBlurFit);
+    phone.classList.toggle('has-zoom', !!o.zoom && !isBlurFit);
+
+    const frameBadge = document.getElementById('prevFrameBadge');
+    if (frameBadge) frameBadge.textContent = isBlurFit ? 'Blur Fit' : 'Crop';
+    
+    const styleBadge = document.getElementById('prevStyleBadge');
+    if (styleBadge) styleBadge.textContent = st.label || st.presetKey || 'Style';
+
+    const homeCap = document.getElementById('homeCap');
+    if (homeCap) renderLiveCaption(homeCap, st, sampleLang, tickIdx);
+  }
+
+  // 2. Modal phone preview if open
+  const modalPhone = document.getElementById('modalPhone');
+  if (modalPhone) {
+    const isBlurFit = (o.layout === 'blur_fit');
+    modalPhone.classList.toggle('layout-blur_fit', isBlurFit);
+    modalPhone.classList.toggle('layout-crop', !isBlurFit);
+    modalPhone.classList.toggle('has-zoom', !!o.zoom && !isBlurFit);
+
+    const modalFrameChip = document.getElementById('modalFrameChip');
+    if (modalFrameChip) modalFrameChip.textContent = isBlurFit ? 'Blur fit' : 'Center crop';
+
+    const modalCap = document.getElementById('modalCap');
+    if (modalCap) renderLiveCaption(modalCap, st, sampleLang, tickIdx);
+  }
+}
+
+function repaintHomeCap() {
+  updateHomePreview();
+}
+
+function setPreviewMedia(url) {
+  const fg = document.getElementById('homePrev');
+  const bg = document.getElementById('homePrevBg');
+  const ph = document.getElementById('homePrevPlaceholder');
+  const note = document.getElementById('homePrevNote');
+  
+  if (fg) {
+    fg.src = url;
+    fg.currentTime = 0;
+    fg.play().catch(() => {});
+  }
+  if (bg) {
+    bg.src = url;
+    bg.currentTime = 0;
+    bg.play().catch(() => {});
+  }
+  if (ph) ph.classList.add('hidden');
+  if (note) note.hidden = true;
+  updateHomePreview();
+}
+
+function clearPreviewMedia() {
+  const fg = document.getElementById('homePrev');
+  const bg = document.getElementById('homePrevBg');
+  const ph = document.getElementById('homePrevPlaceholder');
+  const note = document.getElementById('homePrevNote');
+  
+  if (fg) {
+    fg.pause();
+    fg.removeAttribute('src');
+    fg.load();
+  }
+  if (bg) {
+    bg.pause();
+    bg.removeAttribute('src');
+    bg.load();
+  }
+  if (ph) ph.classList.remove('hidden');
+  if (note) note.hidden = false;
+  updateHomePreview();
+}
+
+function toggleHomePrevPlay() {
+  const fg = document.getElementById('homePrev');
+  const bg = document.getElementById('homePrevBg');
+  if (!fg) return;
+  if (fg.paused) {
+    fg.play().catch(() => {});
+    bg?.play().catch(() => {});
+    updatePlayButtonIcons(false);
+  } else {
+    fg.pause();
+    bg?.pause();
+    updatePlayButtonIcons(true);
+  }
+}
+
+function toggleHomePrevMute() {
+  const fg = document.getElementById('homePrev');
+  if (!fg) return;
+  fg.muted = !fg.muted;
+  updateMuteButtonIcons(fg.muted);
+}
+
+function updatePlayButtonIcons(isPaused) {
+  const btn = document.getElementById('homePrevPlayBtn');
+  if (!btn) return;
+  const fg = document.getElementById('homePrev');
+  const paused = isPaused !== undefined ? isPaused : (fg ? fg.paused : true);
+  btn.innerHTML = paused ? `<svg class="i" viewBox="0 0 24 24" fill="currentColor">${ICON.play}</svg>`
+                         : `<svg class="i" viewBox="0 0 24 24" fill="currentColor">${ICON.pause}</svg>`;
+  btn.title = paused ? 'Play preview' : 'Pause preview';
+}
+
+function updateMuteButtonIcons(isMuted) {
+  const btn = document.getElementById('homePrevMuteBtn');
+  if (!btn) return;
+  const fg = document.getElementById('homePrev');
+  const muted = isMuted !== undefined ? isMuted : (fg ? fg.muted : true);
+  btn.innerHTML = muted ? `<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>`
+                        : `<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.08"/></svg>`;
+  btn.title = muted ? 'Unmute audio' : 'Mute audio';
+}
+
+function setupHomePreviewEvents() {
+  const fg = document.getElementById('homePrev');
+  const bg = document.getElementById('homePrevBg');
+  if (fg && bg) {
+    fg.onplay = () => { bg.play().catch(() => {}); updatePlayButtonIcons(false); };
+    fg.onpause = () => { bg.pause(); updatePlayButtonIcons(true); };
+    fg.ontimeupdate = () => {
+      if (Math.abs(bg.currentTime - fg.currentTime) > 0.25) {
+        bg.currentTime = fg.currentTime;
+      }
+    };
+    fg.onseeking = () => { bg.currentTime = fg.currentTime; };
+    fg.onseeked = () => { bg.currentTime = fg.currentTime; };
+  }
+
+  const playBtn = document.getElementById('homePrevPlayBtn');
+  if (playBtn) playBtn.onclick = (e) => { e.stopPropagation(); toggleHomePrevPlay(); };
+
+  const muteBtn = document.getElementById('homePrevMuteBtn');
+  if (muteBtn) muteBtn.onclick = (e) => { e.stopPropagation(); toggleHomePrevMute(); };
+
+  const expandBtn = document.getElementById('homePrevExpandBtn');
+  if (expandBtn) expandBtn.onclick = (e) => { e.stopPropagation(); openPreviewModal(); };
+
+  const phone = document.getElementById('homePhone');
+  if (phone) {
+    phone.onclick = (e) => {
+      if (e.target.closest('.prev-controls')) return;
+      openPreviewModal();
+    };
+  }
+}
+
+function openPreviewModal() {
+  const optBox = document.getElementById('optbox') || document;
+  const curOpts = readOpts(optBox);
+  const curStyle = getResolvedStyle(document.getElementById('styleCard') || document);
+  const hp = document.getElementById('homePrev');
+  const src = hp?.currentSrc || hp?.src || Home.objUrl || '';
+  const isBlurFit = (curOpts.layout === 'blur_fit');
+  const hasCaptions = (curOpts.captions !== false);
+  const hasZoom = !!curOpts.zoom;
+  
+  const presets = Object.entries(STYLES.presets || FALLBACK_PRESETS);
+  const presetOptions = presets.map(([k, v]) =>
+    `<option value="${k}" ${k === curStyle.presetKey ? 'selected' : ''}>${esc(v.label || k)}</option>`
+  ).join('');
+
+  const modalHtml = `
+  <div class="prev-modal-wrap" id="prevModalWrap">
+    <div class="prev-modal-head">
+      <div class="pm-title-group">
+        <div class="pm-title">${ico('film')}<span>Preview Inspector</span></div>
+        <span class="chip">9:16</span>
+        <span class="chip" id="modalFrameChip">${isBlurFit ? 'Blur fit' : 'Center crop'}</span>
+      </div>
+      <div class="pm-head-actions">
+        <button type="button" class="btn ghost sm" id="modalFsBtn" title="Fullscreen">${ico('expand')}<span>Fullscreen</span></button>
+        <button type="button" class="icon sm" id="modalCloseBtn" title="Close (Esc)" aria-label="Close">${ico('x')}</button>
+      </div>
+    </div>
+    
+    <div class="prev-modal-body">
+      <div class="prev-modal-stage" id="modalStage">
+        <div class="phone prev-modal-phone ${isBlurFit ? 'layout-blur_fit' : 'layout-crop'} ${hasZoom ? 'has-zoom' : ''}" id="modalPhone">
+          <video id="modalPrevBg" class="prev-bg" muted playsinline loop preload="auto"></video>
+          <video id="modalPrev" class="prev-fg" playsinline loop preload="auto"></video>
+          <div class="phone-placeholder ${src ? 'hidden' : ''}" id="modalPlaceholder">
+            <div class="ph-backdrop"><div class="ph-glow"></div><div class="ph-grid"></div></div>
+            <div class="ph-badge">${ico('sparkle')}<span>Live Preview</span></div>
+            <p class="phone-empty" id="modalNote">Paste a link or drop a video to preview on real frames</p>
+          </div>
+          <div class="livecap cap" id="modalCap"></div>
+        </div>
+        
+        <div class="prev-transport">
+          <button type="button" class="icon sm" id="modalPlayBtn" title="Play / Pause">${ico('pause', 'fill')}</button>
+          <span class="time mono" id="modalTimeCur">0:00</span>
+          <input type="range" class="modal-scrubber" id="modalScrubber" min="0" max="100" step="0.1" value="0" aria-label="Seek preview">
+          <span class="time mono" id="modalTimeDur">0:00</span>
+          <button type="button" class="icon sm" id="modalMuteBtn" title="Mute / Unmute">${ico('sun')}</button>
+        </div>
+      </div>
+      
+      <div class="prev-modal-sidebar">
+        <h4>Live Customization</h4>
+        <p class="hint">Adjust settings in real time to inspect exact rendering output.</p>
+        
+        <div class="pm-ctrl-group">
+          <label class="label">Framing</label>
+          <div class="seg" id="modalFramingSeg" data-opt="layout">
+            <button type="button" data-v="crop" class="${!isBlurFit ? 'on' : ''}">Center crop</button>
+            <button type="button" data-v="blur_fit" class="${isBlurFit ? 'on' : ''}">Blur fit</button>
+          </div>
+        </div>
+        
+        <div class="pm-ctrl-group">
+          <label class="label">Caption preset</label>
+          <select id="modalPresetSelect" class="txt">${presetOptions}</select>
+        </div>
+        
+        <div class="pm-ctrl-group">
+          <div class="row-between"><label class="label">Text size</label><output id="modalSizeOut">${curStyle.font_size || curStyle.size || 72}</output></div>
+          <input type="range" id="modalSizeRange" min="40" max="110" value="${curStyle.font_size || curStyle.size || 72}">
+        </div>
+        
+        <div class="pm-ctrl-group">
+          <div class="row" style="gap:10px">
+            <div style="flex:1"><label class="label">Highlight</label><div class="row" style="gap:6px"><input type="color" id="modalHlColor" value="${curStyle.highlight_color || '#FFE600'}"><span class="hint mono" id="modalHlHint" style="font-size:11px">${curStyle.highlight_color || '#FFE600'}</span></div></div>
+            <div style="flex:1"><label class="label">Text color</label><div class="row" style="gap:6px"><input type="color" id="modalTxtColor" value="${curStyle.text_color || '#FFFFFF'}"><span class="hint mono" id="modalTxtHint" style="font-size:11px">${curStyle.text_color || '#FFFFFF'}</span></div></div>
+          </div>
+        </div>
+        
+        <div class="pm-ctrl-group">
+          <label class="label">Position</label>
+          <div class="seg dense" id="modalPosSeg">
+            <button type="button" data-v="lower" class="${(curStyle.position || 'lower') === 'lower' ? 'on' : ''}">Bottom</button>
+            <button type="button" data-v="center" class="${curStyle.position === 'center' ? 'on' : ''}">Center</button>
+            <button type="button" data-v="top" class="${curStyle.position === 'top' ? 'on' : ''}">Top</button>
+          </div>
+        </div>
+
+        <div class="pm-ctrl-group">
+          <label class="label">Display mode</label>
+          <div class="seg dense" id="modalDispSeg">
+            <button type="button" data-v="line" class="${(curStyle.display || 'line') !== 'word' ? 'on' : ''}">Line</button>
+            <button type="button" data-v="word" class="${curStyle.display === 'word' ? 'on' : ''}">Word</button>
+          </div>
+        </div>
+
+        <div class="pm-ctrl-group">
+          <label class="label">Sample Language</label>
+          <div class="seg sm" id="modalLangSeg">
+            <button type="button" data-l="en" class="${sampleLang === 'en' ? 'on' : ''}">English</button>
+            <button type="button" data-l="ar" class="${sampleLang === 'ar' ? 'on' : ''}">العربية</button>
+          </div>
+        </div>
+        
+        <div class="pm-ctrl-group pm-togs">
+          <label class="tog compact"><input type="checkbox" id="modalCapTog" ${hasCaptions ? 'checked' : ''}><span class="knob"></span><span class="tl">Animated captions</span></label>
+          <label class="tog compact"><input type="checkbox" id="modalZoomTog" ${hasZoom ? 'checked' : ''}><span class="knob"></span><span class="tl">Slow zoom effect</span></label>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  const m = openModal(modalHtml, true);
+  
+  const mv = $('#modalPrev', m);
+  const mvb = $('#modalPrevBg', m);
+  
+  if (src && mv && mvb) {
+    mv.src = src;
+    mvb.src = src;
+    const curTime = hp ? hp.currentTime : 0;
+    mv.currentTime = curTime;
+    mvb.currentTime = curTime;
+    mv.muted = hp ? hp.muted : true;
+    mvb.muted = true;
+    mv.play().catch(() => {});
+    mvb.play().catch(() => {});
+  }
+  
+  updateHomePreview();
+
+  const scrub = $('#modalScrubber', m);
+  const curTimeEl = $('#modalTimeCur', m);
+  const durTimeEl = $('#modalTimeDur', m);
+  const playBtn = $('#modalPlayBtn', m);
+  const muteBtn = $('#modalMuteBtn', m);
+  const fsBtn = $('#modalFsBtn', m);
+  const closeBtn = $('#modalCloseBtn', m);
+
+  function updateModalTransport() {
+    if (!mv || !mv.duration) return;
+    const pct = (mv.currentTime / mv.duration) * 100;
+    if (scrub && !scrub.matches(':active')) scrub.value = pct;
+    if (curTimeEl) curTimeEl.textContent = fmtT(mv.currentTime);
+    if (durTimeEl) durTimeEl.textContent = fmtT(mv.duration);
+  }
+
+  function updateModalMuteBtn() {
+    if (!muteBtn || !mv) return;
+    muteBtn.innerHTML = mv.muted
+      ? `<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>`
+      : `<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.08"/></svg>`;
+    muteBtn.title = mv.muted ? 'Unmute' : 'Mute';
+  }
+
+  function updateModalPlayBtn() {
+    if (!playBtn || !mv) return;
+    playBtn.innerHTML = mv.paused
+      ? `<svg class="i" viewBox="0 0 24 24" fill="currentColor">${ICON.play}</svg>`
+      : `<svg class="i" viewBox="0 0 24 24" fill="currentColor">${ICON.pause}</svg>`;
+  }
+
+  if (mv) {
+    mv.addEventListener('timeupdate', () => {
+      updateModalTransport();
+      if (mvb && Math.abs(mvb.currentTime - mv.currentTime) > 0.25) mvb.currentTime = mv.currentTime;
+    });
+    mv.addEventListener('loadedmetadata', updateModalTransport);
+    mv.addEventListener('play', () => { mvb?.play().catch(() => {}); updateModalPlayBtn(); });
+    mv.addEventListener('pause', () => { mvb?.pause(); updateModalPlayBtn(); });
+  }
+
+  if (scrub) {
+    scrub.oninput = () => {
+      if (!mv || !mv.duration) return;
+      const targetTime = (Number(scrub.value) / 100) * mv.duration;
+      mv.currentTime = targetTime;
+      if (mvb) mvb.currentTime = targetTime;
+      if (curTimeEl) curTimeEl.textContent = fmtT(targetTime);
+    };
+  }
+
+  if (playBtn) {
+    playBtn.onclick = () => {
+      if (!mv) return;
+      if (mv.paused) { mv.play().catch(() => {}); mvb?.play().catch(() => {}); }
+      else { mv.pause(); mvb?.pause(); }
+      updateModalPlayBtn();
+    };
+  }
+
+  if (muteBtn) {
+    muteBtn.onclick = () => {
+      if (!mv) return;
+      mv.muted = !mv.muted;
+      updateModalMuteBtn();
+      if (hp) hp.muted = mv.muted;
+      updateMuteButtonIcons(mv.muted);
+    };
+    updateModalMuteBtn();
+  }
+
+  if (fsBtn) {
+    fsBtn.onclick = () => {
+      const stage = $('#modalStage', m) || $('#modalPhone', m);
+      if (!document.fullscreenElement) {
+        stage?.requestFullscreen?.().catch(() => {});
+      } else {
+        document.exitFullscreen?.().catch(() => {});
+      }
+    };
+  }
+
+  if (closeBtn) {
+    closeBtn.onclick = () => {
+      if (hp && mv) {
+        hp.currentTime = mv.currentTime;
+        if (!mv.paused) hp.play().catch(() => {});
+      }
+      closeModal();
+    };
+  }
+
+  // Framing
+  $$('#modalFramingSeg button', m).forEach(btn => {
+    btn.onclick = () => {
+      $$('#modalFramingSeg button', m).forEach(b => b.classList.toggle('on', b === btn));
+      const val = btn.dataset.v;
+      const homeSeg = document.querySelector('#optbox [data-opt="layout"]');
+      if (homeSeg) {
+        $$('button', homeSeg).forEach(b => b.classList.toggle('on', b.dataset.v === val));
+      }
+      paintPlan();
+      updateHomePreview();
+    };
+  });
+
+  // Preset
+  const presetSel = $('#modalPresetSelect', m);
+  if (presetSel) {
+    presetSel.onchange = () => {
+      const key = presetSel.value;
+      const homePreset = document.querySelector('#styleCard .stylePreset');
+      if (homePreset) homePreset.value = key;
+      paintStyles($('#styleCard') || document);
+      $('#homeCustomize').innerHTML = customizeHTML(readStyleRoot($('#styleCard')).overrides, key);
+      paintPlan();
+      updateHomePreview();
+    };
+  }
+
+  // Size
+  const sizeRange = $('#modalSizeRange', m);
+  const sizeOut = $('#modalSizeOut', m);
+  if (sizeRange) {
+    sizeRange.oninput = () => {
+      if (sizeOut) sizeOut.textContent = sizeRange.value;
+      const homeRange = document.querySelector('#homeCustomize [data-ov="font_size"]');
+      if (homeRange) {
+        homeRange.value = sizeRange.value;
+        delete homeRange.dataset.auto;
+        const out = homeRange.parentElement?.querySelector('output');
+        if (out) out.textContent = sizeRange.value;
+      }
+      updateHomePreview();
+    };
+  }
+
+  // Highlight & Text Color
+  const hlIn = $('#modalHlColor', m);
+  const txtIn = $('#modalTxtColor', m);
+  if (hlIn) {
+    hlIn.oninput = () => {
+      $('#modalHlHint', m).textContent = hlIn.value;
+      const homeHl = document.querySelector('#homeCustomize [data-ov="highlight_color"]');
+      if (homeHl) {
+        homeHl.value = hlIn.value;
+        const hint = homeHl.parentElement?.querySelector('.hint');
+        if (hint) hint.textContent = hlIn.value;
+      }
+      updateHomePreview();
+    };
+  }
+  if (txtIn) {
+    txtIn.oninput = () => {
+      $('#modalTxtHint', m).textContent = txtIn.value;
+      const homeTxt = document.querySelector('#homeCustomize [data-ov="text_color"]');
+      if (homeTxt) {
+        homeTxt.value = txtIn.value;
+        const hint = homeTxt.parentElement?.querySelector('.hint');
+        if (hint) hint.textContent = txtIn.value;
+      }
+      updateHomePreview();
+    };
+  }
+
+  // Position
+  $$('#modalPosSeg button', m).forEach(btn => {
+    btn.onclick = () => {
+      $$('#modalPosSeg button', m).forEach(b => b.classList.toggle('on', b === btn));
+      const val = btn.dataset.v;
+      const homeSeg = document.querySelector('#homeCustomize [data-ov="position"]');
+      if (homeSeg) {
+        $$('button', homeSeg).forEach(b => b.classList.toggle('on', b.dataset.v === val));
+      }
+      updateHomePreview();
+    };
+  });
+
+  // Display mode
+  $$('#modalDispSeg button', m).forEach(btn => {
+    btn.onclick = () => {
+      $$('#modalDispSeg button', m).forEach(b => b.classList.toggle('on', b === btn));
+      const val = btn.dataset.v;
+      const homeSeg = document.querySelector('#homeCustomize [data-ov="display"]');
+      if (homeSeg) {
+        $$('button', homeSeg).forEach(b => b.classList.toggle('on', b.dataset.v === val));
+        const root = document.getElementById('styleCard') || document;
+        const curPreset = $('.stylePreset', root)?.value || 'bold-pop';
+        const curOv = readStyleRoot(root).overrides;
+        curOv.display = val;
+        $('#homeCustomize').innerHTML = customizeHTML(curOv, curPreset);
+      }
+      updateHomePreview();
+    };
+  });
+
+  // Sample Language
+  $$('#modalLangSeg button', m).forEach(btn => {
+    btn.onclick = () => {
+      sampleLang = btn.dataset.l;
+      $$('#modalLangSeg button', m).forEach(b => b.classList.toggle('on', b === btn));
+      $$('.sampleLang button').forEach(x => x.classList.toggle('on', x.dataset.l === sampleLang));
+      repaintStyles();
+      updateHomePreview();
+    };
+  });
+
+  // Toggles: Captions & Zoom
+  const capTog = $('#modalCapTog', m);
+  if (capTog) {
+    capTog.onchange = () => {
+      const homeCap = document.querySelector('#optbox [data-opt="captions"]');
+      if (homeCap) homeCap.checked = capTog.checked;
+      paintPlan();
+      updateHomePreview();
+    };
+  }
+  const zoomTog = $('#modalZoomTog', m);
+  if (zoomTog) {
+    zoomTog.onchange = () => {
+      const homeZoom = document.querySelector('#optbox [data-opt="zoom"]');
+      if (homeZoom) homeZoom.checked = zoomTog.checked;
+      paintPlan();
+      updateHomePreview();
+    };
+  }
+}
+
 function paintStyles(root) {
   const grid = $('.styleGrid', root); if (!grid) return;
   const tab = (root.dataset && root.dataset.styleTab) || 'quick';
@@ -442,11 +1165,10 @@ let _pv; function previewReal(root) {
     } catch (e) { /* keep the old preview on failure */ }
   }, 300);
 }
-// one global ticker lights the active word on every card (cheap, no per-card timers)
+// one global ticker lights the active word on every card and updates live caption overlays
 setInterval(() => {
-  if (!document.querySelector('.scard,.livecap')) return;   // only while a picker/preview is visible
   tickIdx = (tickIdx + 1) % 4;
-  document.querySelectorAll('.scard .cap,.livecap').forEach(cap => cap.querySelectorAll('.w').forEach((w, i) => {
+  document.querySelectorAll('.scard .card-preview').forEach(cap => cap.querySelectorAll('.w').forEach((w, i) => {
     if (w.classList.contains('solo')) {
       const arr = (w.dataset.words || '').split(',');
       w.textContent = arr[tickIdx % arr.length] || '';
@@ -463,6 +1185,7 @@ setInterval(() => {
     w.style.background = on && pill ? pill : 'transparent';
     w.style.borderRadius = '.25em'; w.style.padding = on && pill ? '0 .25em' : '0';
   }));
+  updateHomePreview();
 }, 450);
 (async () => {
   try {
@@ -471,6 +1194,7 @@ setInterval(() => {
       STYLES = d;
       try { injectFonts(STYLES.presets); } catch (_) {}
       repaintStyles();
+      updateHomePreview();
     }
   } catch (_) { /* fallback presets already rendered */ }
 })();
@@ -529,23 +1253,29 @@ document.addEventListener('click', e => {
     const scope = card.closest('.optbody,.modal,#styleCard,.edside') || document;
     const hid = $('.stylePreset', scope); if (hid) hid.value = card.dataset.k;
     const t = (card.dataset.tpl !== undefined && card.dataset.tpl !== '') ? getTpls()[+card.dataset.tpl] : null;
-    paintStyles(scope); previewReal(scope); repaintHomeCap(); paintPlan();
-    if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
+    paintStyles(scope); previewReal(scope); paintPlan();
     scope.querySelectorAll('.custwrap').forEach(c => {
-      c.innerHTML = customizeHTML(t ? (t.overrides || {}) : readStyleRoot(scope).overrides, card.dataset.k);
+      c.innerHTML = customizeHTML(t ? (t.overrides || {}) : {}, card.dataset.k);
     });
+    updateHomePreview();
+    if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
     return;
   }
   const lb = e.target.closest('.sampleLang button');
   if (lb) {
     sampleLang = lb.dataset.l;
     $$('.sampleLang button').forEach(x => x.classList.toggle('on', x === lb));
-    repaintStyles(); repaintHomeCap();
+    repaintStyles();
+    updateHomePreview();
     return;
   }
 });
 document.addEventListener('change', e => {
   if (e.target.closest?.('#plist .project-checkbox')) updateSelection();
+  if (e.target.dataset?.ov || e.target.dataset?.opt || e.target.closest?.('.custwrap,#optbox,#styleCard')) {
+    updateHomePreview();
+    if (e.target.closest?.('#optbox')) paintPlan();
+  }
 });
 document.addEventListener('input', e => {
   const el = e.target;
@@ -557,10 +1287,17 @@ document.addEventListener('input', e => {
   if (el.type === 'range' && el.dataset.opt) {
     const out = el.closest('.opt-group')?.querySelector('output'); if (out) out.textContent = el.value + (el.dataset.unit || '');
   }
+  if (el.type === 'color') {
+    const hint = el.parentElement?.querySelector('.hint');
+    if (hint) hint.textContent = el.value;
+  }
   if (el.dataset.ov || (el.dataset.opt && el.closest('.optbody,.modal')?.querySelector('.styleGrid'))) {
     const scope = el.closest('.optbody,.modal,#styleCard'); if (scope) previewReal(scope);
   }
-  if (el.dataset.ov) { repaintHomeCap(); if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay(); }
+  if (el.dataset.ov || el.dataset.opt || el.dataset.ovList || el.closest?.('.custwrap,#optbox,#styleCard')) {
+    updateHomePreview();
+    if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
+  }
 });
 /* Clip cards: hover to preview (muted), rewind when the pointer leaves. */
 document.addEventListener('pointerover', e => {
@@ -682,6 +1419,8 @@ function viewHome() {
   mountStyles($('#styleCard'), state.opts?.caption_style?.preset || 'bold-pop');
   setGenBtn();
   paintPlan();
+  setupHomePreviewEvents();
+  updateHomePreview();
   $('#findBtn').onclick = () => findVideo(($('#url')?.value || '').trim());
   const urlIn = $('#url');
   urlIn.addEventListener('input', e => onUrlTyped(e.target.value));
@@ -709,7 +1448,8 @@ function resetFound() {
   Object.assign(Home, { probeId: null, probeReady: false, probeFailed: false, info: null, url: '',
     last: null, done: false, infoReady: false, readyShown: false });
   const w = $('#foundWrap'); if (w) w.innerHTML = '';
-  saveFound(); setGenBtn(); repaintHomeCap();
+  clearPreviewMedia();
+  saveFound(); setGenBtn(); updateHomePreview();
 }
 function saveFound() {
   try {
@@ -838,10 +1578,10 @@ function setFoundReady(p) {
   const media = $('#foundMedia');
   if (media && p.preview) media.innerHTML = `<video src="${p.preview}" controls muted playsinline preload="metadata"></video><span class="chip found-chip">${ico('check')}Preview ready</span>`;
   const prog = $('#foundProg'); if (prog) prog.textContent = 'Preview ready. Generating uses the full-quality download.';
-  const hv = $('#homePrev');
-  if (hv && p.preview) { hv.src = p.preview; hv.play().catch(() => {}); }
-  const note = $('#homePrevNote'); if (note) note.hidden = true;
-  setGenBtn(); repaintHomeCap();
+  if (p.preview) {
+    setPreviewMedia(p.preview);
+  }
+  setGenBtn();
 }
 function paintUploadRow() {
   const row = $('#uprow'); if (!row) return;
@@ -859,8 +1599,7 @@ function paintUploadRow() {
 function clearPending() {
   if (state.pending) { state.pending = null; state.uploadPct = null; paintUploadRow(); }
   if (Home.objUrl) {
-    const pv = $('#homePrev');
-    if (pv && (pv.getAttribute('src') || '').startsWith('blob:')) { pv.removeAttribute('src'); pv.load(); }
+    clearPreviewMedia();
     URL.revokeObjectURL(Home.objUrl); Home.objUrl = null;
   }
   Home.localName = null;
@@ -883,8 +1622,7 @@ function paintLocalCard() {
       <div class="found-prog">Uploads are used directly, so nothing is downloaded.</div>
       <div class="found-actions"><button class="btn ghost sm" data-act="clear-source">${ico('x')}Remove</button></div>
     </div></div>`;
-  const pv = $('#homePrev'); if (pv) { pv.src = Home.objUrl; pv.play().catch(() => {}); }
-  const note = $('#homePrevNote'); if (note) note.hidden = true;
+  setPreviewMedia(Home.objUrl);
 }
 function handleFile(file) {
   if (!/\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(file.name)) { toast('Unsupported file type. Use mp4, mov, mkv, webm, avi or m4v.', 'bad'); return; }
@@ -2140,10 +2878,27 @@ function readSettings() {
 /* ---------- actions (event delegation) ---------- */
 const actions = {
   async go() { await startProject(); },
-  seg(b) { $$('button', b.parentElement).forEach(x => x.classList.toggle('on', x === b));
-    const scope = b.closest('.optbody,.modal,#styleCard'); if (scope && $('.styleGrid', scope)) previewReal(scope);
+  seg(b) {
+    $$('button', b.parentElement).forEach(x => x.classList.toggle('on', x === b));
+    const scope = b.closest('.optbody,.modal,#styleCard');
+    if (scope && $('.styleGrid', scope)) previewReal(scope);
     if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
-    if (b.closest('#optbox')) paintPlan(); },
+    if (b.closest('#optbox')) paintPlan();
+    
+    // If display segment in customize form was changed:
+    const segContainer = b.parentElement;
+    if (segContainer && segContainer.dataset.ov === 'display') {
+      const custWrap = b.closest('.custwrap');
+      if (custWrap) {
+        const root = b.closest('#styleCard') || document;
+        const curPreset = $('.stylePreset', root)?.value || 'bold-pop';
+        const curOv = readStyleRoot(root).overrides;
+        curOv.display = b.dataset.v;
+        custWrap.innerHTML = customizeHTML(curOv, curPreset);
+      }
+    }
+    updateHomePreview();
+  },
   'rm-upload'() { clearPending(); resetFound(); },
   async cancel() {
     try { mergeProject(await api(`/api/projects/${curProject().id}/cancel`, { method: 'POST', body: {} })); toast('Cancelling…'); } catch (e) { toast(e.message, 'bad'); }
