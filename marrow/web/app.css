@@ -343,11 +343,42 @@ input[type="range"] { width: 100%; accent-color: var(--on); margin: 6px 0; }
   border-radius: 22px; border: 1px solid var(--line-2); box-shadow: var(--shadow); container-type: inline-size;
 }
 .phone video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
-.phone-empty { position: absolute; left: 12px; right: 12px; bottom: 12px; padding: 9px 11px; border-radius: 12px; background: rgba(0, 0, 0, .6); color: #ddd; font-size: 12px; text-align: center; }
-.livecap { position: absolute; left: 6%; right: 6%; text-align: center; line-height: 1.2; pointer-events: none; }
-.livecap .w, .cap-live span { display: inline-block; margin: 0 .08em; transition: transform .12s; }
+.cap-live span { display: inline-block; margin: 0 .08em; transition: transform .12s; }
 .cap-live { position: absolute; left: 6%; right: 6%; bottom: 14%; text-align: center; line-height: 1.25; pointer-events: none; color: #fff; }
 .cap-live span.on { color: var(--accent); }
+
+/* live caption preview (Home): one engine drives two phones, the one beside the picker and the enlarged view.
+   Sizes are the renderer's 1080-wide units written with cqw, so the caption scales with the phone. */
+.phone.pv { background: linear-gradient(170deg, #2a2a33 0%, #0b0b10 75%); }
+.phone.pv .pv-bg { position: absolute; left: -8%; top: -8%; width: 116%; height: 116%; display: block; filter: blur(3.7cqw); opacity: 0; transition: opacity .36s ease; pointer-events: none; }
+.phone.pv .pv-fg { position: absolute; left: 50%; top: 50%; right: auto; bottom: auto; width: 100%; height: auto; max-width: none; display: block; object-fit: fill; transform: translate(-50%, -50%) scale(var(--k, 1)); transform-origin: 50% 50%; transition: transform .36s cubic-bezier(.22, .61, .36, 1); will-change: transform; pointer-events: none; }
+.phone.pv .pv-note { position: absolute; left: 8px; right: 44px; top: 8px; z-index: 3; margin: 0; padding: 5px 9px; border-radius: 99px; background: rgba(0, 0, 0, .55); color: #ececf1; font-size: 10.5px; font-weight: 600; line-height: 1.3; pointer-events: none; }
+.phone.pv .pv-expand { position: absolute; right: 8px; top: 8px; z-index: 4; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .6); color: #fff; }
+.phone.pv .pv-expand:hover { background: rgba(0, 0, 0, .82); }
+.phone.pv .pv-expand .i { width: 14px; height: 14px; }
+.phone.pv .pv-cap { position: absolute; left: 5.5556%; right: 5.5556%; z-index: 2; text-align: center; font-family: var(--ff, Arial, sans-serif); font-weight: var(--fw, 700); font-style: var(--fst, normal); font-size: var(--fs, 11.73px); line-height: var(--lh, 1.2); color: var(--tc, #fff); -webkit-text-stroke: var(--stkw, 0px) var(--stc, #000); paint-order: stroke fill; text-shadow: var(--tsh, none); pointer-events: none; }
+.phone.pv .pv-cap[dir="rtl"] { direction: rtl; }
+.phone.pv .pv-line { display: block; }
+.phone.pv .pv-cap.pv-box .pv-line { display: block; width: -webkit-fit-content; width: fit-content; margin: 0 auto; padding: var(--bxpad, 0px); background: var(--bxbg, transparent); }
+.phone.pv .pv-w { display: inline-block; transform-origin: 50% 60%; }
+.phone.pv .pv-w.pv-on { color: var(--hl, #ffe600); transform: scale(var(--sc, 1)); }
+.phone.pv .pv-w.pv-on.pv-pop { animation: pvPop .11s linear both; }
+@keyframes pvPop { from { transform: scale(calc(var(--sc, 1) * .8)); } to { transform: scale(var(--sc, 1)); } }
+.phone.pv .pv-w.pv-pill.pv-on { color: var(--ptc, #000); background: var(--pbg, #fff); -webkit-text-stroke-width: 0; border-radius: .25em; padding: 0 var(--ppad, 0px); line-height: 1.05; }
+.phone.pv .pv-solo { display: inline-block; transform-origin: 50% 60%; animation: pvWord .16s linear both; }
+@keyframes pvWord { 0% { transform: scale(.7); } 56.25% { transform: scale(1.08); } 100% { transform: scale(1); } }
+.cust-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
+
+/* enlarged caption preview: a lightbox over the page; the controls stay on the page */
+.modal.pv-modal { width: auto; max-width: calc(100vw - 48px); }
+.pv-lb { display: grid; gap: 14px; justify-items: center; }
+.pv-lb-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; width: 100%; }
+.pv-lb-head h3 { margin-bottom: 2px; }
+.pv-lb-head .hint { font-size: 12.5px; }
+.pv-lb-stage { height: clamp(360px, calc(100vh - 240px), 740px); aspect-ratio: 9 / 16; }
+.phone.pv-big { width: 100%; height: 100%; border-radius: 26px; cursor: pointer; }
+.pv-lb-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.phone.pv-big:fullscreen { position: fixed !important; inset: 0 !important; margin: auto !important; width: auto !important; height: 100% !important; max-width: 100vw; aspect-ratio: 9 / 16; border: 0; border-radius: 0; background: #000; }
 
 /* ---------- home ---------- */
 .home { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--gap); align-items: stretch; }

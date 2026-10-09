@@ -174,7 +174,7 @@ function openModal(html, wide) {
   b.addEventListener('mousedown', e => { if (e.target === b) closeModal(); });
   $('#modal-root').appendChild(b); return b.firstChild;
 }
-function closeModal() { const r = $('#modal-root'); const v = $('video', r); if (v) v.pause(); r.innerHTML = ''; editCtx = null; refreshLiveOverlay = null; }
+function closeModal() { const r = $('#modal-root'); const v = $('video', r); if (v) v.pause(); r.innerHTML = ''; editCtx = null; refreshLiveOverlay = null; pvDetachBig(); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 function confirmBox({ title, text, ok = 'Confirm', danger = false, check = null }) {
   return new Promise(res => {
@@ -191,35 +191,37 @@ const seg = (key, items, val) => `<div class="seg" data-opt="${key}">${items.map
   `<button type="button" class="${v === val ? 'on' : ''}" data-v="${v}" data-act="seg">${l}</button>`).join('')}</div>`;
 const tog = (key, label, on, hint) => `<label class="tog"><input type="checkbox" data-opt="${key}" ${on ? 'checked' : ''}><span class="knob"></span><span class="tl">${label}${hint ? `<small>${hint}</small>` : ''}</span></label>`;
 function customizeHTML(ov, presetKey) {
-  ov = ov || {};
-  const p = { ...(STYLES.base || {}), ...(STYLES.presets?.[presetKey] || {}) };
-  const display = ov.display || p.display || 'line';
-  const wordMode = display === 'word';
-  const wc = ov.word_colors || p.word_colors || [];
+  ov = capNorm(ov);                                   // touched values only (font_size from older saves reads as size)
+  const e = resolveCap(presetKey, ov);                // what the renderer will use, shown wherever nothing is overridden
+  const has = k => ov[k] !== undefined && ov[k] !== null && ov[k] !== '';
+  const T = k => (has(k) ? ' data-touched="1"' : '');
+  const word = e.display === 'word';
   const fams = ['Arial', ...new Set(Object.values(STYLES.presets || {}).flatMap(x => [x.font, x.font_ar]).filter(Boolean))];
-  const font = ov.font || '';
-  const pos = ov.position || p.position || 'lower';
-  const size = ov.font_size || ov.size || '';
-  const ovSeg = (key, items, val, dense) => `<div class="seg${dense ? ' dense' : ''}" data-ov="${key}">${items.map(([v, l]) =>
+  if (has('font') && !fams.includes(ov.font)) fams.push(ov.font);
+  const ovSeg = (key, items, val, dense, touched) => `<div class="seg${dense ? ' dense' : ''}" data-ov="${key}"${touched ? ' data-touched="1"' : ''}>${items.map(([v, l]) =>
     `<button type="button" class="${String(v) === String(val) ? 'on' : ''}" data-v="${v}" data-act="seg">${l}</button>`).join('')}</div>`;
+  const color = (key, label) => `<div class="cell"><label>${label}</label><div class="row"><input type="color" data-ov="${key}" value="${e[key]}"${T(key)}><span class="hint mono">${has(key) ? ov[key] : ''}</span></div></div>`;
+  const wcols = [0, 1, 2].map(i => (e.word_colors && e.word_colors[i]) || e.highlight_color);
+  const touchedAny = Object.keys(ov).some(k => has(k));
   return `<div class="cfg2">
-    <div class="cell"><label>Text size</label><div class="row"><input type="range" min="40" max="110" data-ov="font_size" data-unit="" value="${size || 72}" ${size ? '' : 'data-auto="1"'}><output>${size || 'auto'}</output></div></div>
-    <div class="cell"><label>Uppercase</label><label class="tog compact"><input type="checkbox" data-ov="uppercase" ${ov.uppercase === false ? '' : 'checked'}><span class="knob"></span></label></div>
-    <div class="cell"><label>Display</label>${ovSeg('display', [['line', 'Line'], ['word', 'Word']], wordMode ? 'word' : 'line')}</div>
-    <div class="cell"><label>Font</label><select data-ov="font"><option value="">Style default</option>${fams.map(f => `<option ${f === font ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
-    <div class="cell"><label>Outline</label>${ovSeg('outline', [['', 'Auto'], ...[0, 1, 2, 3, 4, 5, 6, 7, 8].map(n => [n, String(n)])], ov.outline == null ? '' : ov.outline, true)}</div>
-    <div class="cell"><label>Words per line</label>${ovSeg('max_words_per_line', [['', 'Auto'], [1, '1'], [2, '2'], [3, '3']], ov.max_words_per_line == null ? '' : ov.max_words_per_line)}</div>
-    <div class="cell"><label>Position</label>${ovSeg('position', [['lower', 'Bottom'], ['center', 'Center'], ['top', 'Top']], pos)}</div>
-    <div class="cell"><label>Pop animation</label><label class="tog compact"><input type="checkbox" data-ov="anim_pop" ${ov.anim === 'none' ? '' : 'checked'}><span class="knob"></span></label></div>
-    <div class="cell"><label>Highlight color</label><div class="row"><input type="color" data-ov="highlight_color" value="${ov.highlight_color || p.highlight_color || '#FFE600'}"><span class="hint mono">${ov.highlight_color || ''}</span></div></div>
-    <div class="cell"><label>Text color</label><div class="row"><input type="color" data-ov="text_color" value="${ov.text_color || p.text_color || '#FFFFFF'}"><span class="hint mono">${ov.text_color || ''}</span></div></div>
-    ${wordMode ? `<div class="cell"><label>Word colors</label><div class="wcols">${[0, 1, 2].map(i => `<input type="color" data-ov-list="word_colors" value="${wc[i] || p.highlight_color || '#FFE600'}">`).join('')}</div></div>` : ''}
-    ${wordMode ? `<div class="cell"><label>Strip punctuation</label><label class="tog compact"><input type="checkbox" data-ov="strip_punct" ${ov.strip_punct === false ? '' : 'checked'}><span class="knob"></span></label></div>` : ''}
-  </div>`;
+    <div class="cell"><label>Text size</label><div class="row"><input type="range" min="40" max="110" data-ov="size" data-unit=""${T('size')} value="${e.size}"><output>${has('size') ? e.size : 'auto'}</output></div></div>
+    <div class="cell"><label>Uppercase</label><label class="tog compact"><input type="checkbox" data-ov="uppercase"${T('uppercase')} ${e.uppercase ? 'checked' : ''}><span class="knob"></span></label></div>
+    <div class="cell"><label>Display</label>${ovSeg('display', [['line', 'Line'], ['word', 'Word']], word ? 'word' : 'line', false, has('display'))}</div>
+    <div class="cell"><label>Font</label><select data-ov="font"${T('font')}><option value="">Style default</option>${fams.map(f => `<option ${has('font') && f === ov.font ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
+    <div class="cell"><label>Outline</label>${ovSeg('outline', [['', 'Auto'], ...[0, 1, 2, 3, 4, 5, 6, 7, 8].map(n => [n, String(n)])], has('outline') ? ov.outline : '', true, has('outline'))}</div>
+    <div class="cell"><label>Words per line</label>${ovSeg('max_words_per_line', [['', 'Auto'], [1, '1'], [2, '2'], [3, '3']], has('max_words_per_line') ? ov.max_words_per_line : '', false, has('max_words_per_line'))}</div>
+    <div class="cell"><label>Position</label>${ovSeg('position', [['lower', 'Bottom'], ['center', 'Center'], ['top', 'Top']], e.position, false, has('position'))}</div>
+    <div class="cell"><label>Pop animation</label><label class="tog compact"><input type="checkbox" data-ov="anim_pop"${T('anim')} ${e.anim === 'none' ? '' : 'checked'}><span class="knob"></span></label></div>
+    ${color('highlight_color', 'Highlight color')}
+    ${color('text_color', 'Text color')}
+    <div class="cell" data-word-only${word ? '' : ' hidden'}><label>Word colors</label><div class="wcols">${wcols.map(c => `<input type="color" data-ov-list="word_colors" value="${c}"${T('word_colors')}>`).join('')}</div></div>
+    <div class="cell" data-word-only${word ? '' : ' hidden'}><label>Strip punctuation</label><label class="tog compact"><input type="checkbox" data-ov="strip_punct"${T('strip_punct')} ${e.strip_punct === false ? '' : 'checked'}><span class="knob"></span></label></div>
+  </div>
+  <div class="cust-foot" data-cust-foot${touchedAny ? '' : ' hidden'}><button type="button" class="btn ghost sm" data-act="cust-reset">Reset to preset</button></div>`;
 }
-/* Home's caption-style block: the preset carousel plus a live 9:16 phone preview on the right. */
+/* Home's caption-style block: the preset carousel, and the live 9:16 phone on the right (the caption preview engine). */
 function styleSectionHTML(preset) {
-  return stylePickerHTML(preset, `<div class="phone" id="homePhone"><video id="homePrev" muted playsinline loop preload="auto"></video><div class="livecap cap" id="homeCap" style="display:none"></div><p class="phone-empty" id="homePrevNote">Find a video to preview this style on real frames</p></div>`);
+  return stylePickerHTML(preset, '<div class="phone pv" id="homePhone"></div>');
 }
 function optsPanel(o, compact) {
   const cs = o.caption_style || { preset: 'bold-pop', overrides: {} };
@@ -253,21 +255,23 @@ function readStyleRoot(root) {
   const o = { preset: $('.stylePreset', root)?.value || 'bold-pop', overrides: {} };
   if (!root) return o;
   $$('[data-ov]', root).forEach(el => {
+    if (el.dataset.touched !== '1') return;           // only what the user changed: a preset keeps its own look
     const k = el.dataset.ov;
     if (k === 'anim_pop') { o.overrides.anim = el.checked ? 'pop' : 'none'; return; }
-    if (el.dataset.auto) return;                 // a slider nobody touched keeps the style default
     let v;
     if (el.classList.contains('seg')) v = $('.on', el)?.dataset.v;
     else if (el.type === 'checkbox') v = el.checked;
     else if (el.type === 'range' || el.type === 'number') v = el.value !== '' ? Number(el.value) : undefined;
     else if (el.value !== '') v = el.value;
-    if (v === undefined || v === null) return;
+    if (typeof v === 'string' && /^\d+$/.test(v)) v = Number(v);      // Outline and Words per line are numbers
+    if (v === undefined || v === null || v === '') return;   // "Auto" and "Style default" mean no override
     o.overrides[k] = v;
   });
-  $$('[data-ov-list="word_colors"]', root).forEach(el => {
-    const cols = [el.value].filter(Boolean);
-    if (cols.length) o.overrides.word_colors = (o.overrides.word_colors || []).concat(cols).slice(0, 6);
-  });
+  const wc = $$('[data-ov-list="word_colors"]', root);
+  if (wc.some(el => el.dataset.touched === '1')) {
+    const cols = wc.map(el => el.value).filter(Boolean).slice(0, 6);
+    if (cols.length) o.overrides.word_colors = cols;
+  }
   return o;
 }
 
@@ -382,24 +386,346 @@ function scrollCarousel(direction) {
   const track = document.querySelector('.carousel-track');
   if (track) track.scrollBy({ left: direction * 250, behavior: 'smooth' });
 }
-function repaintHomeCap() {
-  const cap = $('#homeCap'); if (!cap) return;
-  const hasVideo = ($('#homePrev')?.src || '').startsWith('blob:') || ($('#homePrev')?.currentSrc || '').startsWith('http');
-  if (!hasVideo && !Home.probeReady) { cap.style.display = 'none'; return; }
-  const key = $('#styleCard .stylePreset')?.value || 'bold-pop';
-  const p = { ...STYLES.base, ...STYLES.presets[key] };
-  if (!p || !p.size) return;
-  const ar = sampleLang === 'ar';
-  const fam = ar ? p.font_ar : p.font, S = n => `calc(${n} * 100cqw / 1080)`;
-  const stroke = p.outline ? `-webkit-text-stroke:${S(p.outline * 2)} ${p.outline_color};paint-order:stroke fill;` : '';
-  const shadow = p.shadow ? `text-shadow:0 ${S(p.shadow * 1.5)} ${S(p.shadow * 2)} #000a;` : '';
-  const boxed = p.box ? `background:${p.box_color}${Math.round(p.box_opacity * 2.55).toString(16).padStart(2, '0')};padding:.1em .4em;border-radius:.2em;` : '';
-  const pos = p.position === 'center' ? 'top:42%' : p.position === 'top' ? 'top:14%' : 'bottom:16%';
-  cap.setAttribute('style', `display:block;${pos};font-family:'${fam}',Arial;font-size:${S(p.size)};font-weight:${p.bold ? 700 : 400};${stroke}${shadow}${boxed}`);
-  cap.innerHTML = p.display === 'word'
-    ? `<span class="w solo" data-words="${SAMPLES[sampleLang].join(',')}" data-hl="${p.highlight_color}" data-pill="${p.highlight_mode === 'pill' ? p.pill_color : ''}" data-pt="${p.pill_text}" data-sc="115" style="color:${p.highlight_color}">${SAMPLES[sampleLang][0]}</span>`
-    : wordSpans(p, sampleLang);
+/* ---------- live caption preview ----------
+   One engine draws the look the renderer burns in (captioner.py) and the framing it uses (renderer.py).
+   Every control in Caption style and Clip settings updates it at once: before any video is found, and with
+   no server round trip. The phone beside the style picker and the enlarged view are two instances. */
+const CAP_BASE = {                                   // mirrors caption_styles.BASE; the server's copy wins once loaded
+  font: 'Arial', font_ar: 'Arial', size: 72, bold: true, italic: false, uppercase: true,
+  text_color: '#FFFFFF', highlight_color: '#FFE600', outline_color: '#000000', outline: 4, shadow: 2, blur: 0,
+  box: false, box_color: '#000000', box_opacity: 60, highlight_mode: 'color', pill_color: '#FFFFFF',
+  pill_text: '#000000', pill_pad: 10, active_scale: 110, emphasis_scale: 125, anim: 'pop', display: 'line',
+  word_colors: null, strip_punct: true, min_gap: 0.22, position: 'lower', max_words_per_line: 4, max_chars_per_line: 22,
+};
+const PV_SAMPLE = {                                  // a sample phrase; its punctuation shows where lines break
+  en: ['make', 'it', 'go', 'viral,', 'right', 'now.'],
+  ar: ['اجعل', 'فيديوك،', 'ينتشر', 'الآن.', 'ويصل', 'للجميع'],
+};
+const PV_ENERGY = [0.3, 0.2, 0.6, 0.95, 0.45, 0.8];  // stand-in word energies: the top 15% get the emphasis scale
+const PV_MARGIN = { shorts: 420, reels: 460 };       // caption_margin_v, used until /api/caption-styles answers
+const PV_TICK_MS = 400;                              // one sample word per tick
+const PUNCT_BREAK = /[,.?!;:…،؛؟]$/;                  // captioner.PUNCT_BREAK: a line may end after these
+const PUNCT_STRIP = /^[.,!?;:…،؛؟]+|[.,!?;:…،؛؟]+$/g; // captioner: punctuation removed in word mode when strip_punct is on
+
+/* The style the renderer uses: BASE < config captions < preset < touched overrides (caption_styles.resolve_style). */
+function capNorm(d) {
+  const o = { ...(d || {}) };
+  if ('font_size' in o) { if (o.size == null) o.size = o.font_size; delete o.font_size; }
+  return o;
 }
+function resolveCap(presetKey, ov) {
+  const base = { ...CAP_BASE, ...(STYLES.base || {}) };
+  const st = { ...base };
+  const take = src => {
+    if (!src) return;
+    for (const k of Object.keys(base)) { const v = src[k]; if (v !== undefined && v !== null && v !== '') st[k] = v; }
+  };
+  take(capNorm(STYLES.legacy));
+  take(STYLES.presets && STYLES.presets[presetKey]);
+  take(capNorm(ov));
+  return st;
+}
+/* libass sizes a style's Fontsize to the font's height (OS/2 win ascent + descent), not to its em: see caption_styles.font_height_em */
+const pvFontH = fam => { const m = STYLES.font_height || {}; return m[fam] || m.Arial || 1.117; };
+const pvMargin = platform => (STYLES.margins || PV_MARGIN)[platform === 'reels' ? 'reels' : 'shorts'] ?? PV_MARGIN.shorts;
+function pvPercentile(xs, p) {                       // numpy's default (linear) percentile, as captioner.py uses
+  const a = [...xs].sort((x, y) => x - y);
+  if (!a.length) return Infinity;
+  const pos = p / 100 * (a.length - 1), lo = Math.floor(pos), hi = Math.ceil(pos);
+  return a[lo] + (a[hi] - a[lo]) * (pos - lo);
+}
+function pvGroup(words, maxW, maxC) {                // captioner.group_words; sample words are back to back, so no time gaps
+  const lines = []; let cur = [], chars = 0;
+  for (const w of words) {
+    let extra = w.raw.length + (cur.length ? 1 : 0);
+    if (cur.length && (cur.length >= maxW || chars + extra > maxC)) { lines.push(cur); cur = []; chars = 0; extra = w.raw.length; }
+    cur.push(w); chars += extra;
+    if (PUNCT_BREAK.test(w.raw) && cur.length >= 2) { lines.push(cur); cur = []; chars = 0; }
+  }
+  if (cur.length) lines.push(cur);
+  return lines;
+}
+function hexA(hex, opacityPct) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  const n = m ? parseInt(m[1], 16) : 0;
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${(opacityPct / 100).toFixed(2)})`;
+}
+/* What the phone should show right now: read from the page's own controls (single source of truth). */
+function pvReadState() {
+  const card = $('#styleCard'); if (!card) return null;
+  const seg = key => $(`#optbox .seg[data-opt="${key}"] .on`)?.dataset.v;
+  return {
+    preset: $('.stylePreset', card)?.value || 'bold-pop',
+    ov: readStyleRoot(card).overrides,
+    lang: sampleLang,
+    frame: seg('layout') === 'blur_fit' ? 'blur_fit' : 'crop',
+    platform: seg('platform') || 'shorts',
+    captions: $('#optbox input[data-opt="captions"]')?.checked !== false,
+  };
+}
+/* Fonts: a family is loaded the first time it is needed, and the phone keeps the old face until the new one is
+   ready, so text never flashes in a fallback. */
+const pvFontSeen = new Set();
+function pvFontReady(fam, wgt) {
+  if (!document.fonts || !document.fonts.load) return true;
+  const key = `${wgt} ${fam}`, font = `${wgt} 48px "${fam}"`;
+  if (pvFontSeen.has(key)) return true;
+  if (document.fonts.check(font)) { pvFontSeen.add(key); return true; }
+  if (!pvFontSeen.has('loading ' + key)) {
+    pvFontSeen.add('loading ' + key);
+    document.fonts.load(font).catch(() => {}).then(() => { pvFontSeen.add(key); PV.ver++; pvSync(); });
+  }
+  return false;
+}
+const PV = { home: null, big: null, media: { kind: null, src: '' }, tick: 0, ver: 0 };
+let pvQueued = 0;
+
+class PvPhone {
+  constructor(root, big) {
+    this.root = root; this.big = big;
+    root.innerHTML = '<canvas class="pv-bg" width="54" height="96" aria-hidden="true"></canvas>'
+      + '<video class="pv-fg" muted playsinline loop preload="auto" hidden></video>'
+      + '<img class="pv-fg" alt="" hidden>'
+      + '<p class="pv-note" hidden></p><div class="pv-cap" aria-hidden="true" hidden></div>'
+      + (big ? '' : `<button type="button" class="pv-expand" data-pv-act="enlarge" aria-label="Enlarge preview" title="Enlarge preview">${ico('expand')}</button>`);
+    this.bg = root.querySelector('.pv-bg'); this.v = root.querySelector('video.pv-fg');
+    this.img = root.querySelector('img.pv-fg'); this.note = root.querySelector('.pv-note'); this.cap = root.querySelector('.pv-cap');
+    this.kind = null; this.src = ''; this.ar = 16 / 9; this.failed = false;
+    this.s = null; this.st = null; this.key = ''; this.ck = ''; this.bgOn = false; this.looping = false; this.dead = false;
+    this.words = []; this.lines = []; this.lineOf = []; this.palette = ['#FFFFFF']; this.isWord = false; this.pill = false; this.pop = true;
+    this.lineNo = -1; this.solo = -1; this.litEl = null;
+    const v = this.v;
+    v.addEventListener('loadedmetadata', () => this.geom());
+    v.addEventListener('loadeddata', () => { this.geom(); v.play().catch(() => {}); });
+    v.addEventListener('seeked', () => this.draw());
+    v.addEventListener('timeupdate', () => this.draw());
+    v.addEventListener('error', () => this.fail());
+    this.img.addEventListener('load', () => this.geom());
+    this.img.addEventListener('error', () => this.fail());
+    if (big) root.addEventListener('click', e => { if (!e.target.closest('button')) { if (v.paused) v.play().catch(() => {}); else v.pause(); } });
+  }
+  destroy() {
+    this.dead = true; this.v.pause(); this.v.removeAttribute('src'); this.v.load(); this.img.removeAttribute('src');
+  }
+  fail() { this.setMedia(null, ''); this.failed = true; this.paintNote(); }
+  setMedia(kind, src) {
+    kind = kind || null; src = kind ? (src || '') : '';
+    if (kind === this.kind && src === this.src) return;
+    this.kind = kind; this.src = src; this.failed = false; this.ar = 16 / 9;
+    this.v.hidden = kind !== 'video'; this.img.hidden = kind !== 'image';
+    if (kind === 'video') this.v.src = src; else { this.v.removeAttribute('src'); this.v.load(); }
+    if (kind === 'image') this.img.src = src; else this.img.removeAttribute('src');
+    this.geom(); this.paintNote();
+  }
+  geom() {
+    const el = this.kind === 'video' ? this.v : this.kind === 'image' ? this.img : null;
+    const w = el ? (el.videoWidth || el.naturalWidth) : 0, h = el ? (el.videoHeight || el.naturalHeight) : 0;
+    if (w && h) { this.ar = w / h; el.style.aspectRatio = `${w} / ${h}`; }
+    this.applyFrame();
+  }
+  /* Framing as renderer.py does it: crop fills the 9:16 frame (cover), blur fit shows the whole picture
+     (contain) over a blurred copy of itself. The transform is animated, so switching frames glides. */
+  applyFrame() {
+    const frame = this.s ? this.s.frame : 'crop';
+    const rho = (this.kind ? this.ar : 16 / 9) / (9 / 16);
+    const k = frame === 'blur_fit' ? Math.min(1, rho) : Math.max(1, rho);
+    (this.kind === 'image' ? this.img : this.v).style.setProperty('--k', k.toFixed(4));
+    this.bgOn = !!this.kind && frame === 'blur_fit';
+    this.bg.style.opacity = this.bgOn ? '1' : '0';
+    this.draw(); this.watch();
+  }
+  draw() {
+    if (!this.bgOn) return;
+    const el = this.kind === 'image' ? this.img : this.v;
+    if (this.kind === 'video' && el.readyState < 2) return;
+    const sw = el.videoWidth || el.naturalWidth, sh = el.videoHeight || el.naturalHeight;
+    if (!sw || !sh) return;
+    let cw = sw, ch = sh;                             // the renderer blurs a centred 9:16 crop of the frame
+    if (sw / sh > 9 / 16) cw = sh * 9 / 16; else ch = sw * 16 / 9;
+    try { this.bg.getContext('2d').drawImage(el, (sw - cw) / 2, (sh - ch) / 2, cw, ch, 0, 0, this.bg.width, this.bg.height); } catch (_) {}
+  }
+  watch() {                                           // repaint the blurred backdrop on every presented frame
+    if (!this.bgOn || this.kind !== 'video' || this.looping || !this.v.requestVideoFrameCallback) return;
+    this.looping = true;
+    const step = () => {
+      if (this.dead || !this.bgOn || this.kind !== 'video') { this.looping = false; return; }
+      this.draw(); this.v.requestVideoFrameCallback(step);
+    };
+    this.v.requestVideoFrameCallback(step);
+  }
+  paintNote() {
+    const text = this.s && !this.s.captions ? 'Captions are off'
+      : this.failed ? 'Preview unavailable'
+      : !this.kind ? 'Find a video for real frames' : '';
+    this.note.textContent = text; this.note.hidden = !text;
+  }
+  /* Rebuild the caption text only when its structure changes (words, lines, case, display mode). Colours,
+     sizes and positions are CSS variables, so dragging a control never restarts the word animation. */
+  rebuild(s, st) {
+    const rtl = s.lang === 'ar', up = !!st.uppercase && !rtl;
+    const raw = PV_SAMPLE[s.lang] || PV_SAMPLE.en;
+    this.isWord = st.display === 'word';
+    this.pill = !this.isWord && st.highlight_mode === 'pill';
+    this.pop = st.anim === 'pop';
+    if (this.isWord) {
+      this.words = raw.map((t, i) => {
+        const txt = st.strip_punct === false ? t : t.replace(PUNCT_STRIP, '');
+        return { i, text: up ? txt.toUpperCase() : txt };
+      });
+      this.palette = st.word_colors && st.word_colors.length ? st.word_colors : [st.highlight_color];
+      this.lines = []; this.lineOf = [];
+    } else {
+      const thr = pvPercentile(PV_ENERGY, 85);
+      this.words = raw.map((t, i) => ({
+        i, raw: t, text: up ? t.toUpperCase() : t,
+        sc: (PV_ENERGY[i] >= thr ? st.emphasis_scale : st.active_scale) / 100,
+      }));
+      this.lines = pvGroup(this.words, st.max_words_per_line || 4, st.max_chars_per_line || 22);
+      this.lineOf = [];
+      this.lines.forEach((ln, li) => ln.forEach(w => { this.lineOf[w.i] = li; }));
+    }
+    this.cap.setAttribute('dir', rtl ? 'rtl' : 'ltr');
+    this.cap.classList.toggle('pv-box', !!st.box);
+    this.lineNo = -1; this.solo = -1; this.litEl = null;
+    this.cap.innerHTML = '';
+  }
+  lineHTML(li) {
+    return `<div class="pv-line">${this.lines[li].map(w => `<span class="pv-w${this.pill ? ' pv-pill' : ''}${this.pop ? ' pv-pop' : ''}" data-i="${w.i}" style="--sc:${w.sc}">${esc(w.text)}</span>`).join(' ')}</div>`;
+  }
+  /* One sample word lit: word mode shows that word alone in its palette colour; line mode keeps the line and
+     lights the active word. */
+  step(n) {
+    if (this.dead || !this.words.length) return;
+    const idx = n % this.words.length;
+    if (this.isWord) {
+      if (this.solo === idx) return;
+      this.solo = idx;
+      this.cap.innerHTML = `<span class="pv-solo" style="color:${this.palette[idx % this.palette.length]}">${esc(this.words[idx].text)}</span>`;
+      return;
+    }
+    const li = this.lineOf[idx];
+    if (this.lineNo !== li) { this.lineNo = li; this.litEl = null; this.cap.innerHTML = this.lineHTML(li); }
+    const next = this.cap.querySelector(`.pv-w[data-i="${idx}"]`);
+    if (next !== this.litEl) this.lit(next);
+  }
+  /* The renderer grows a lit word's advance along with its glyphs, so its neighbours move apart. A CSS scale
+     alone would bite into the spaces, so the lit word gets the same extra room (half on each side). */
+  lit(el) {
+    if (this.litEl) { this.litEl.classList.remove('pv-on'); this.litEl.style.marginLeft = ''; this.litEl.style.marginRight = ''; }
+    this.litEl = el;
+    if (!el) return;
+    el.classList.add('pv-on');
+    const sc = parseFloat(el.style.getPropertyValue('--sc')) || 1;
+    const room = Math.max(0, (sc - 1) * el.offsetWidth / 2).toFixed(2) + 'px';
+    el.style.marginLeft = room; el.style.marginRight = room;
+  }
+  apply(s, st) {
+    const key = `${PV.ver}|${JSON.stringify([s, st])}`;
+    if (key === this.key) return;
+    this.key = key; this.s = s; this.st = st;
+    const set = (k, v) => this.cap.style.setProperty(k, v), S = v => `calc(${v} * 100cqw / 1080)`;
+    const rtl = s.lang === 'ar', fam = (rtl ? st.font_ar : st.font) || 'Arial', wgt = st.bold ? 700 : 400;
+    const hEm = pvFontH(fam);
+    if (pvFontReady(fam, wgt)) {                     // face, size and line spacing change together, once the face is ready
+      set('--ff', `"${fam.replace(/["\\]/g, '')}", Arial, sans-serif`); set('--fw', String(wgt));
+      set('--fs', S(st.size / hEm));                 // em size that gives libass's Fontsize, line by line
+      set('--lh', String(hEm));                      // and its line spacing (the font height)
+    }
+    set('--fst', st.italic ? 'italic' : 'normal');
+    const ow = st.box ? 0 : (st.outline || 0);       // libass draws a box instead of an outline in box mode
+    set('--stkw', ow ? S(ow * 2) : '0px');          // stroke centred on the glyph edge: 2x gives `outline` px outside
+    set('--stc', st.outline_color);
+    set('--tsh', st.shadow && !st.box ? `${S(st.shadow)} ${S(st.shadow)} 0 rgba(0, 0, 0, .5)` : 'none');
+    set('--tc', st.text_color); set('--hl', st.highlight_color);
+    set('--pbg', st.pill_color); set('--ptc', st.pill_text); set('--ppad', S(st.pill_pad));
+    set('--bxbg', hexA(st.box_color, st.box_opacity)); set('--bxpad', S(st.outline || 0));
+    const cs = this.cap.style;                       // alignment as in generate_ass: lower = \an2, centre = \an5, top = \an8
+    if (st.position === 'center') { cs.top = '50%'; cs.bottom = 'auto'; cs.transform = 'translateY(-50%)'; }
+    else if (st.position === 'top') { cs.top = `${260 / 19.2}%`; cs.bottom = 'auto'; cs.transform = 'none'; }
+    else { cs.top = 'auto'; cs.bottom = `${pvMargin(s.platform) / 19.2}%`; cs.transform = 'none'; }
+    const ck = [s.lang, st.display, st.uppercase, st.max_words_per_line, st.max_chars_per_line, st.strip_punct,
+      st.highlight_mode, st.box, st.anim, st.active_scale, st.emphasis_scale, JSON.stringify(st.word_colors), st.highlight_color].join('|');
+    if (ck !== this.ck) { this.ck = ck; this.rebuild(s, st); }
+    if (this.isWord && this.solo >= 0) {             // palette edits recolour the lit word in place
+      const sp = this.cap.querySelector('.pv-solo');
+      if (sp) sp.style.color = this.palette[this.solo % this.palette.length];
+    }
+    this.cap.hidden = !s.captions;
+    this.paintNote(); this.applyFrame();
+    this.step(PV.tick);
+    if (this.litEl) this.lit(this.litEl);           // re-measure: the size or face may have changed
+  }
+}
+
+function pvSync() {                                  // any change: one repaint per frame, after the page has updated
+  if (!pvQueued) pvQueued = requestAnimationFrame(() => { pvQueued = 0; pvApply(); });
+}
+function pvLive() {
+  if (PV.home && (PV.home.dead || !PV.home.root.isConnected)) { PV.home.destroy(); PV.home = null; }
+  if (PV.big && (PV.big.dead || !PV.big.root.isConnected)) { PV.big.destroy(); PV.big = null; }
+}
+function pvApply() {
+  pvLive();
+  if (!PV.home && !PV.big) return;
+  const s = pvReadState(); if (!s) return;
+  const st = resolveCap(s.preset, s.ov);
+  [PV.home, PV.big].forEach(p => { if (p) p.apply(s, st); });
+}
+function pvSetMedia(kind, src) {                     // a found video, a dropped file, or a thumbnail (kind 'image')
+  PV.media = { kind: kind || null, src: kind ? (src || '') : '' };
+  [PV.home, PV.big].forEach(p => { if (p) p.setMedia(PV.media.kind, PV.media.src); });
+  pvSync();
+}
+function pvMountHome() {
+  pvDestroyHome();
+  const root = $('#homePhone'); if (!root) return;
+  PV.home = new PvPhone(root, false);
+  PV.home.setMedia(PV.media.kind, PV.media.src);
+  pvSync();
+}
+function pvDestroyHome() { if (PV.home) { PV.home.destroy(); PV.home = null; } }
+function pvDetachBig() { if (PV.big) { PV.big.destroy(); PV.big = null; } }
+function pvOpenBig() {
+  const s = pvReadState() || { preset: 'bold-pop', frame: 'crop', lang: 'en' };
+  const label = STYLES.presets?.[s.preset]?.label || s.preset;
+  const m = openModal(`<div class="pv-lb">
+    <div class="pv-lb-head"><div><h3>Caption preview</h3>
+      <p class="hint">${esc(label)} · ${s.frame === 'blur_fit' ? 'Blur fit' : 'Center crop'} · ${s.lang === 'ar' ? 'Arabic' : 'English'}</p></div>
+      <button type="button" class="icon" data-pv-act="close" aria-label="Close preview" title="Close (Esc)">${ico('x')}</button></div>
+    <div class="pv-lb-stage"><div class="phone pv pv-big" id="pvBig"></div></div>
+    <div class="pv-lb-foot"><span class="hint">Click the video to pause or play.</span>
+      <button type="button" class="btn" data-pv-act="fs">${ico('expand')}Full screen</button></div></div>`);
+  m.classList.add('pv-modal');
+  PV.big = new PvPhone($('#pvBig', m), true);
+  PV.big.setMedia(PV.media.kind, PV.media.src);
+  pvSync();
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest?.('[data-pv-act]');
+  if (!b) return;
+  const act = b.dataset.pvAct;
+  if (act === 'enlarge') pvOpenBig();
+  else if (act === 'close') closeModal();
+  else if (act === 'fs') { const p = $('#pvBig')?.requestFullscreen?.(); if (p && p.catch) p.catch(() => {}); }
+});
+setInterval(() => {                                  // one shared clock for every phone
+  pvLive();
+  if (!PV.home && !PV.big) return;
+  PV.tick++;
+  [PV.home, PV.big].forEach(p => { if (p) p.step(PV.tick); });
+}, PV_TICK_MS);
+
+/* Customize: a control becomes an override only when the user touches it, so a preset keeps its own look. */
+function custSync() {
+  $$('.custwrap').forEach(w => {
+    const word = $('[data-ov="display"] .on', w)?.dataset.v === 'word';
+    $$('[data-word-only]', w).forEach(el => { el.hidden = !word; });
+    const any = !!$('[data-touched="1"]', w);
+    $$('[data-cust-foot]', w).forEach(el => { el.hidden = !any; });
+  });
+}
+function capChanged() { custSync(); pvSync(); }
+
 function paintStyles(root) {
   const grid = $('.styleGrid', root); if (!grid) return;
   const tab = (root.dataset && root.dataset.styleTab) || 'quick';
@@ -444,9 +770,9 @@ let _pv; function previewReal(root) {
 }
 // one global ticker lights the active word on every card (cheap, no per-card timers)
 setInterval(() => {
-  if (!document.querySelector('.scard,.livecap')) return;   // only while a picker/preview is visible
+  if (!document.querySelector('.scard')) return;   // only while a picker is visible
   tickIdx = (tickIdx + 1) % 4;
-  document.querySelectorAll('.scard .cap,.livecap').forEach(cap => cap.querySelectorAll('.w').forEach((w, i) => {
+  document.querySelectorAll('.scard .cap').forEach(cap => cap.querySelectorAll('.w').forEach((w, i) => {
     if (w.classList.contains('solo')) {
       const arr = (w.dataset.words || '').split(',');
       w.textContent = arr[tickIdx % arr.length] || '';
@@ -470,7 +796,7 @@ setInterval(() => {
     if (d && d.presets && Object.keys(d.presets).length) {
       STYLES = d;
       try { injectFonts(STYLES.presets); } catch (_) {}
-      repaintStyles();
+      repaintStyles(); pvSync();
     }
   } catch (_) { /* fallback presets already rendered */ }
 })();
@@ -529,39 +855,39 @@ document.addEventListener('click', e => {
     const scope = card.closest('.optbody,.modal,#styleCard,.edside') || document;
     const hid = $('.stylePreset', scope); if (hid) hid.value = card.dataset.k;
     const t = (card.dataset.tpl !== undefined && card.dataset.tpl !== '') ? getTpls()[+card.dataset.tpl] : null;
-    paintStyles(scope); previewReal(scope); repaintHomeCap(); paintPlan();
+    paintStyles(scope); previewReal(scope); paintPlan();
     if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
     scope.querySelectorAll('.custwrap').forEach(c => {
       c.innerHTML = customizeHTML(t ? (t.overrides || {}) : readStyleRoot(scope).overrides, card.dataset.k);
     });
+    capChanged();
     return;
   }
   const lb = e.target.closest('.sampleLang button');
   if (lb) {
     sampleLang = lb.dataset.l;
     $$('.sampleLang button').forEach(x => x.classList.toggle('on', x === lb));
-    repaintStyles(); repaintHomeCap();
+    repaintStyles(); capChanged();
     return;
   }
 });
 document.addEventListener('change', e => {
   if (e.target.closest?.('#plist .project-checkbox')) updateSelection();
+  touchedChange(e.target);
 });
-document.addEventListener('input', e => {
-  const el = e.target;
+document.addEventListener('input', e => touchedChange(e.target));
+function touchedChange(el) {
   if (el.closest?.('#optbox')) paintPlan();
-  if (el.type === 'range' && el.dataset.ov) {
-    delete el.dataset.auto;                       // the user touched it: this value is now an override
-    const out = el.parentElement.querySelector('output'); if (out) out.textContent = el.value + (el.dataset.unit || '');
-  }
-  if (el.type === 'range' && el.dataset.opt) {
-    const out = el.closest('.opt-group')?.querySelector('output'); if (out) out.textContent = el.value + (el.dataset.unit || '');
-  }
-  if (el.dataset.ov || (el.dataset.opt && el.closest('.optbody,.modal')?.querySelector('.styleGrid'))) {
+  if (el.dataset?.ov) el.dataset.touched = '1';
+  if (el.dataset?.ovList) $$('[data-ov-list="word_colors"]', el.closest('.custwrap') || document).forEach(x => { x.dataset.touched = '1'; });
+  if (el.type === 'range' && el.dataset?.ov) { const out = el.parentElement.querySelector('output'); if (out) out.textContent = el.value + (el.dataset.unit || ''); }
+  if (el.type === 'range' && el.dataset?.opt) { const out = el.closest('.opt-group')?.querySelector('output'); if (out) out.textContent = el.value + (el.dataset.unit || ''); }
+  if (el.dataset?.ov || (el.dataset?.opt && el.closest('.optbody,.modal')?.querySelector('.styleGrid'))) {
     const scope = el.closest('.optbody,.modal,#styleCard'); if (scope) previewReal(scope);
   }
-  if (el.dataset.ov) { repaintHomeCap(); if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay(); }
-});
+  if (el.dataset?.ov && editCtx && typeof refreshLiveOverlay === 'function') refreshLiveOverlay();
+  if (el.closest?.('#styleCard,#optbox,.custwrap')) capChanged();
+}
 /* Clip cards: hover to preview (muted), rewind when the pointer leaves. */
 document.addEventListener('pointerover', e => {
   const box = e.target.closest?.('.clip .vid'); const v = box?.querySelector('video');
@@ -628,6 +954,7 @@ const LINK_RE = /^https?:\/\/[^\s/]+\.[^\s]+/i;
 function viewHome() {
   if (!state.opts) state.opts = state.settings ? state.settings.job_defaults : { clips: 5, duration: 45, platform: 'shorts', layout: 'crop', captions: true, use_llm: true, zoom: false, caption_style: { preset: 'bold-pop', overrides: {} } };
   const s = state.system;
+  pvDestroyHome();
   main.innerHTML = `
   ${s && !s.ffmpeg ? `<div class="banner bad">${ico('alert')}<div>FFmpeg wasn’t found, so clips can’t be rendered. Install it (Windows: <code>winget install ffmpeg</code>), open a new terminal and restart Marrow.</div></div>` : ''}
   <header class="page-head">
@@ -680,6 +1007,7 @@ function viewHome() {
   $('#homeCustomize').innerHTML = customizeHTML(state.opts?.caption_style?.overrides, state.opts?.caption_style?.preset);
   $$('details.cust').forEach(d => { d.open = custOpen; });
   mountStyles($('#styleCard'), state.opts?.caption_style?.preset || 'bold-pop');
+  custSync(); pvMountHome();
   setGenBtn();
   paintPlan();
   $('#findBtn').onclick = () => findVideo(($('#url')?.value || '').trim());
@@ -709,7 +1037,7 @@ function resetFound() {
   Object.assign(Home, { probeId: null, probeReady: false, probeFailed: false, info: null, url: '',
     last: null, done: false, infoReady: false, readyShown: false });
   const w = $('#foundWrap'); if (w) w.innerHTML = '';
-  saveFound(); setGenBtn(); repaintHomeCap();
+  saveFound(); setGenBtn(); pvSetMedia(null);
 }
 function saveFound() {
   try {
@@ -832,16 +1160,15 @@ function paintFoundCard(p) {
       <div id="foundNote"></div>
       <div class="found-actions"><button class="btn ghost sm" data-act="clear-source">${ico('x')}Remove</button></div>
     </div></div>`;
+  if (p.thumb && PV.media.kind !== 'video') pvSetMedia('image', p.thumb);
 }
 function setFoundReady(p) {
   Home.probeReady = true;
   const media = $('#foundMedia');
   if (media && p.preview) media.innerHTML = `<video src="${p.preview}" controls muted playsinline preload="metadata"></video><span class="chip found-chip">${ico('check')}Preview ready</span>`;
   const prog = $('#foundProg'); if (prog) prog.textContent = 'Preview ready. Generating uses the full-quality download.';
-  const hv = $('#homePrev');
-  if (hv && p.preview) { hv.src = p.preview; hv.play().catch(() => {}); }
-  const note = $('#homePrevNote'); if (note) note.hidden = true;
-  setGenBtn(); repaintHomeCap();
+  if (p.preview) pvSetMedia('video', p.preview);
+  setGenBtn();
 }
 function paintUploadRow() {
   const row = $('#uprow'); if (!row) return;
@@ -859,8 +1186,7 @@ function paintUploadRow() {
 function clearPending() {
   if (state.pending) { state.pending = null; state.uploadPct = null; paintUploadRow(); }
   if (Home.objUrl) {
-    const pv = $('#homePrev');
-    if (pv && (pv.getAttribute('src') || '').startsWith('blob:')) { pv.removeAttribute('src'); pv.load(); }
+    if (PV.media.kind === 'video' && PV.media.src === Home.objUrl) pvSetMedia(null);
     URL.revokeObjectURL(Home.objUrl); Home.objUrl = null;
   }
   Home.localName = null;
@@ -883,8 +1209,7 @@ function paintLocalCard() {
       <div class="found-prog">Uploads are used directly, so nothing is downloaded.</div>
       <div class="found-actions"><button class="btn ghost sm" data-act="clear-source">${ico('x')}Remove</button></div>
     </div></div>`;
-  const pv = $('#homePrev'); if (pv) { pv.src = Home.objUrl; pv.play().catch(() => {}); }
-  const note = $('#homePrevNote'); if (note) note.hidden = true;
+  pvSetMedia('video', Home.objUrl);
 }
 function handleFile(file) {
   if (!/\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(file.name)) { toast('Unsupported file type. Use mp4, mov, mkv, webm, avi or m4v.', 'bad'); return; }
@@ -900,7 +1225,6 @@ function handleFile(file) {
     Home.info = { title: file.name, duration: probe.duration };
     const mm = $('#up-meta'); if (mm) mm.textContent = `Local file · ${fmtT(probe.duration)}`;
   };
-  repaintHomeCap();
   state.pending = { name: file.name, upload: null }; state.uploadPct = 0; paintUploadRow();
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '/api/upload?filename=' + encodeURIComponent(file.name));
@@ -1958,7 +2282,7 @@ function edxRestore(s) {
   $('#edx-s').value = o.trim[0]; $('#edx-e').value = o.trim[1];
   $$('#edx-words input').forEach(i => { if (o.words[i.dataset.i] !== undefined) { i.value = o.words[i.dataset.i]; i.size = Math.max(3, i.value.length); } });
   Edits.words.forEach(w => { if (o.words[w.i] !== undefined) w.t = o.words[w.i]; });
-  paintEdxWtl(); edxOverlay(); repaintHomeCap();
+  paintEdxWtl(); edxOverlay();
 }
 function edxUndo() {
   if (Edits.undo.length < 2) return;
@@ -2141,9 +2465,22 @@ function readSettings() {
 const actions = {
   async go() { await startProject(); },
   seg(b) { $$('button', b.parentElement).forEach(x => x.classList.toggle('on', x === b));
+    if (b.parentElement.dataset.ov) b.parentElement.dataset.touched = '1';
     const scope = b.closest('.optbody,.modal,#styleCard'); if (scope && $('.styleGrid', scope)) previewReal(scope);
     if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
-    if (b.closest('#optbox')) paintPlan(); },
+    if (b.closest('#optbox')) paintPlan();
+    if (b.closest('#styleCard,#optbox,.custwrap')) capChanged(); },
+  'cust-reset'(b) {                                   // back to the preset: no overrides at all
+    const wrap = b.closest('.custwrap'); if (!wrap) return;
+    const scope = wrap.closest('.optbody,.modal,#styleCard,.edside') || document;
+    const edits = !!wrap.closest('.edside');
+    if (edits) edxSnapshot();
+    wrap.innerHTML = customizeHTML({}, $('.stylePreset', scope)?.value || 'bold-pop');
+    previewReal(scope);
+    if (edits) { edxDirty(true); edxOverlay(); }
+    if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
+    capChanged();
+  },
   'rm-upload'() { clearPending(); resetFound(); },
   async cancel() {
     try { mergeProject(await api(`/api/projects/${curProject().id}/cancel`, { method: 'POST', body: {} })); toast('Cancelling…'); } catch (e) { toast(e.message, 'bad'); }

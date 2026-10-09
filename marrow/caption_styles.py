@@ -1,3 +1,5 @@
+import struct
+from functools import lru_cache
 from pathlib import Path
 
 FONTS_DIR = Path(__file__).parent / "assets" / "fonts"
@@ -57,12 +59,61 @@ PRESETS = {
 }
 
 
+ARIAL_HEIGHT_EM = 1.117      # Arial (and its metric twin Liberation Sans): usWinAscent 1854 + usWinDescent 434, 2048 upm
+
+
+@lru_cache(maxsize=None)
+def font_height_em(path):
+    """Height of a font in em: OS/2 usWinAscent + usWinDescent over unitsPerEm.
+
+    libass sizes a subtitle style's Fontsize to this height, not to the em. So Montserrat ExtraBold
+    (height 1.56 em) at Fontsize 72 is drawn with an em of about 46 px. The preview uses the same rule."""
+    data = Path(path).read_bytes()
+    count = struct.unpack_from(">H", data, 4)[0]
+    tables = {}
+    for i in range(count):
+        tag, _, offset, _ = struct.unpack_from(">4sIII", data, 12 + 16 * i)
+        tables[tag] = offset
+    upm = struct.unpack_from(">H", data, tables[b"head"] + 18)[0]
+    win_asc, win_desc = struct.unpack_from(">HH", data, tables[b"OS/2"] + 74)
+    return (win_asc + win_desc) / upm
+
+
+def font_heights():
+    """{family: height in em} for every bundled preset font, plus Arial (used for families not bundled)."""
+    out = {"Arial": ARIAL_HEIGHT_EM}
+    for preset in PRESETS.values():
+        for fam, fname in ((preset.get("font"), preset.get("font_file")),
+                           (preset.get("font_ar"), preset.get("font_ar_file"))):
+            path = FONTS_DIR / fname if fname else None
+            if fam and path and path.is_file():
+                out.setdefault(fam, round(font_height_em(path), 4))
+    return out
+
+
+# Key names older builds and config files used for the caption size. The renderer reads `size`.
+_LEGACY_KEYS = {"font_size": "size"}
+
+
+def normalize_style_keys(d):
+    """Copy of `d` with legacy key names renamed to the names the renderer reads."""
+    out = dict(d or {})
+    for old, new in _LEGACY_KEYS.items():
+        if old in out:
+            value = out.pop(old)
+            if out.get(new) is None:
+                out[new] = value
+    return out
+
+
 def resolve_style(preset=None, overrides=None, legacy=None):
     """BASE < legacy config.captions < preset < user overrides (only known keys)."""
+    legacy = normalize_style_keys(legacy)
+    overrides = normalize_style_keys(overrides)
     st = dict(BASE)
-    st.update({k: v for k, v in (legacy or {}).items() if k in BASE})
+    st.update({k: v for k, v in legacy.items() if k in BASE})
     st.update({k: v for k, v in PRESETS.get(preset or "", {}).items() if k in BASE})
-    st.update({k: v for k, v in (overrides or {}).items() if k in BASE})
+    st.update({k: v for k, v in overrides.items() if k in BASE})
     return st
 
 

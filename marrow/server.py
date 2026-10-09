@@ -91,7 +91,7 @@ def _ov_int(v, lo, hi):
     return v if lo <= v <= hi else None
 
 
-_OV_INT_RANGES = {"font_size": (30, 140), "size": (30, 140), "outline": (0, 20),
+_OV_INT_RANGES = {"size": (30, 140), "outline": (0, 20),
                   "shadow": (0, 10), "blur": (0, 5), "box_opacity": (0, 100),
                   "pill_pad": (0, 30), "active_scale": (80, 200), "emphasis_scale": (80, 250),
                   "max_words_per_line": (1, 10)}
@@ -114,7 +114,11 @@ def _font_allow():
 
 
 def clean_overrides(ov):
-    ov = ov if isinstance(ov, dict) else {}
+    ov = dict(ov) if isinstance(ov, dict) else {}
+    if "font_size" in ov:                   # the Text size slider used to save font_size; the renderer reads size
+        legacy_size = ov.pop("font_size")
+        if ov.get("size") is None:
+            ov["size"] = legacy_size
     out = {}
     for k, v in ov.items():
         if k in _OV_COLORS:
@@ -159,7 +163,7 @@ def clean_job_settings(raw):
     if "text_color" in cs:
         legacy_ov["text_color"] = _color(cs.get("text_color"), "#FFFFFF")
     if "font_size" in cs:
-        legacy_ov["font_size"] = _int(cs.get("font_size"), 30, 140, 72)
+        legacy_ov["size"] = _int(cs.get("font_size"), 30, 140, 72)
     if "uppercase" in cs:
         legacy_ov["uppercase"] = bool(cs.get("uppercase"))
     merged_ov = {**legacy_ov, **clean_overrides(cs.get("overrides"))}
@@ -1633,9 +1637,22 @@ def r_models_dl_status(h, q):
 
 @route("GET", r"/api/caption-styles")
 def r_styles(h, q):
-    from .caption_styles import PRESETS, BASE
+    """Style data for the caption picker and its live preview.
 
-    h.send_json({"base": BASE, "presets": PRESETS})
+    legacy: the config.yaml captions that feed the style (BASE keys only), so the preview starts
+    from the same values the renderer does. margins: caption_margin_v per platform (1920-high frame).
+    font_height: each family's height in em, which sets how large libass draws a Fontsize.
+    """
+    from .caption_styles import BASE, PRESETS, font_heights, normalize_style_keys
+
+    cfg = h.app.config_for()
+    captions = normalize_style_keys(cfg.get("captions") or {})
+    platforms = cfg.get("platforms") or {}
+    margins = {p: int((platforms.get(p) or {}).get("caption_margin_v", d))
+               for p, d in (("shorts", 420), ("reels", 460))}
+    h.send_json({"base": BASE, "presets": PRESETS,
+                 "legacy": {k: v for k, v in captions.items() if k in BASE},
+                 "margins": margins, "font_height": font_heights()})
 
 
 @route("POST", r"/api/projects/([0-9a-f]+)/clips/(\d+)/caption-preview")
