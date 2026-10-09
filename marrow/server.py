@@ -560,11 +560,17 @@ class App:
     def transcript(self, pid, rank, start, end):
         p = self.get(pid)
         self.clip(p, rank)
+        wd = self.work / p["video_id"]
         try:
-            _, raw = studio.load_words(self.work / p["video_id"])
+            words, raw = studio.load_words(wd)
         except FileNotFoundError:
             raise ApiError("Transcript cache not found. Use Regenerate to rebuild it.", 404)
-        return {"words": studio.words_in_range(raw, start, end)}
+        if (wd / "energy.npy").exists():     # cached audio energy only: the renderer's emphasis is set by it
+            studio.attach_energy(wd, words)
+        out = studio.words_in_range(raw, start, end)
+        for w in out:
+            w["score"] = words[w["i"]].score
+        return {"words": out}
 
     def caption_preview(self, pid, rank, body):
         from .caption_styles import PRESETS

@@ -71,3 +71,28 @@ def test_font_height_follows_libass(tmp_path):
     # libass sizes Fontsize to the font's height (win ascent + descent), so the preview uses the same rule
     assert font_height_em(FONTS_DIR / "Montserrat-ExtraBold.ttf") == pytest.approx(1.562, abs=0.002)
     assert font_height_em(FONTS_DIR / "Poppins-Bold.ttf") == pytest.approx(1.762, abs=0.002)
+
+
+def test_transcript_words_carry_the_renderers_energy_scores(tmp_path):
+    """The Edit and Edits previews emphasise the loudest 15% of words the way the render does, from each word's
+    audio energy. The transcript returns that score when the energy cache exists, and never computes it."""
+    import numpy as np
+
+    from marrow import studio
+
+    app = S.App(str(tmp_path))
+    vid = "v1"
+    wd = app.work / vid
+    wd.mkdir(parents=True)
+    (wd / "words.json").write_text(json.dumps({"words": [[1.0, 1.4, "quiet"], [2.0, 2.5, "loud"]]}), encoding="utf-8")
+    app.projects["p1"] = {"id": "p1", "video_id": vid, "settings": {}, "clips": [{"rank": 1, "start": 0.5, "end": 3.0}]}
+    words = app.transcript("p1", 1, 0.5, 3.0)["words"]
+    assert [w["t"] for w in words] == ["quiet", "loud"]
+    assert [w["score"] for w in words] == [0.0, 0.0]          # no energy cache: the renderer's default score
+    fps = studio.ENERGY_FPS
+    rms = np.zeros(int(4 * fps) + 10)
+    rms[int(1.0 * fps):int(1.4 * fps)] = 0.2
+    rms[int(2.0 * fps):int(2.5 * fps)] = 0.9
+    np.save(wd / "energy.npy", rms)
+    words = app.transcript("p1", 1, 0.5, 3.0)["words"]
+    assert [w["score"] for w in words] == pytest.approx([0.2, 0.9], abs=1e-6)

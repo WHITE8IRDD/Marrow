@@ -174,7 +174,7 @@ function openModal(html, wide) {
   b.addEventListener('mousedown', e => { if (e.target === b) closeModal(); });
   $('#modal-root').appendChild(b); return b.firstChild;
 }
-function closeModal() { const r = $('#modal-root'); const v = $('video', r); if (v) v.pause(); r.innerHTML = ''; editCtx = null; refreshLiveOverlay = null; pvDetachBig(); }
+function closeModal() { const r = $('#modal-root'); const v = $('video', r); if (v) v.pause(); r.innerHTML = ''; editCtx = null; pvDetachBig(); pvLive(); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 function confirmBox({ title, text, ok = 'Confirm', danger = false, check = null }) {
   return new Promise(res => {
@@ -389,7 +389,8 @@ function scrollCarousel(direction) {
 /* ---------- live caption preview ----------
    One engine draws the look the renderer burns in (captioner.py) and the framing it uses (renderer.py).
    Every control in Caption style and Clip settings updates it at once: before any video is found, and with
-   no server round trip. The phone beside the style picker and the enlarged view are two instances. */
+   no server round trip. The phone beside the style picker and the enlarged view are two instances. The Edit
+   modal and the Edits page put the same caption layer over the real video (PvOverlay), timed by its clock. */
 const CAP_BASE = {                                   // mirrors caption_styles.BASE; the server's copy wins once loaded
   font: 'Arial', font_ar: 'Arial', size: 72, bold: true, italic: false, uppercase: true,
   text_color: '#FFFFFF', highlight_color: '#FFE600', outline_color: '#000000', outline: 4, shadow: 2, blur: 0,
@@ -434,21 +435,110 @@ function pvPercentile(xs, p) {                       // numpy's default (linear)
   const pos = p / 100 * (a.length - 1), lo = Math.floor(pos), hi = Math.ceil(pos);
   return a[lo] + (a[hi] - a[lo]) * (pos - lo);
 }
-function pvGroup(words, maxW, maxC) {                // captioner.group_words; sample words are back to back, so no time gaps
+const PV_GAP = 0.6;                                  // captioner.group_words: a line breaks after a pause longer than this
+/* captioner.group_words: a line ends at the word or character limit, after a pause longer than `gap`, or after punctuation */
+function pvGroup(words, maxW, maxC, gap) {
   const lines = []; let cur = [], chars = 0;
   for (const w of words) {
     let extra = w.raw.length + (cur.length ? 1 : 0);
-    if (cur.length && (cur.length >= maxW || chars + extra > maxC)) { lines.push(cur); cur = []; chars = 0; extra = w.raw.length; }
+    if (cur.length && (cur.length >= maxW || chars + extra > maxC || w.s - cur[cur.length - 1].e > gap)) {
+      lines.push(cur); cur = []; chars = 0; extra = w.raw.length;
+    }
     cur.push(w); chars += extra;
     if (PUNCT_BREAK.test(w.raw) && cur.length >= 2) { lines.push(cur); cur = []; chars = 0; }
   }
   if (cur.length) lines.push(cur);
   return lines;
 }
+/* captioner._finalize: sorted by start, overlaps clamped, empty events dropped */
+function pvFinalize(ev) {
+  const out = [];
+  for (const x of ev.slice().sort((a, b) => a.s - b.s || a.e - b.e)) {
+    const p = out[out.length - 1];
+    if (p && x.s < p.e - 1e-9) p.e = Math.max(p.s + 0.02, Math.min(p.e, x.s));
+    out.push({ ...x });
+  }
+  return out.filter(x => x.e > x.s + 1e-9);
+}
+const PV_RTL = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/g;   // captioner._AR
+function pvIsRtl(words) {                            // captioner.is_rtl: most of the text is Arabic script
+  const txt = words.map(w => String(w.t)).join('');
+  return !!txt && (txt.match(PV_RTL) || []).length > txt.length / 2;
+}
 function hexA(hex, opacityPct) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
   const n = m ? parseInt(m[1], 16) : 0;
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${(opacityPct / 100).toFixed(2)})`;
+}
+/* The shape of the caption: lines of units (Line mode), or one unit at a time (Word mode). `events` only exist for
+   timed text: the position of the unit lit at each stretch of the clip. */
+function pvLineModel(units, lines, palette, st) {
+  const lineOf = [];
+  lines.forEach((ln, li) => ln.forEach(w => { lineOf[w.pos] = li; }));
+  return { isWord: false, units, lines, lineOf, palette, pill: st.highlight_mode === 'pill', pop: st.anim === 'pop', events: null };
+}
+function pvSampleModel(lang, st) {                   // the sample phrase on Home: one word per tick
+  const rtl = lang === 'ar', up = !!st.uppercase && !rtl;
+  const raw = PV_SAMPLE[lang] || PV_SAMPLE.en;
+  const palette = st.word_colors && st.word_colors.length ? st.word_colors : [st.highlight_color];
+  if (st.display === 'word') {
+    const units = raw.map((t, pos) => {
+      const txt = st.strip_punct === false ? t : t.replace(PUNCT_STRIP, '');
+      return { pos, text: up ? txt.toUpperCase() : txt };
+    });
+    return { isWord: true, units, lines: [], lineOf: [], palette, pill: false, pop: st.anim === 'pop', events: null };
+  }
+  const thr = pvPercentile(PV_ENERGY, 85);
+  const ws = raw.map((t, pos) => ({
+    pos, raw: t, text: up ? t.toUpperCase() : t, s: pos * PV_TICK_MS / 1000, e: (pos + 1) * PV_TICK_MS / 1000,
+    sc: (PV_ENERGY[pos] >= thr ? st.emphasis_scale : st.active_scale) / 100,
+  }));
+  return pvLineModel(ws, pvGroup(ws, st.max_words_per_line || 4, st.max_chars_per_line || 22, PV_GAP), palette, st);
+}
+/* Word mode, as generate_ass lays it out: words that start within min_gap (up to four) share one event. */
+function pvWordModel(ws, st, up, palette) {
+  const gap = +st.min_gap || 0.22;
+  const clusters = []; let cur = [];
+  for (const w of ws) {
+    if (cur.length && w.s - cur[0].s < gap && cur.length < 4) cur.push(w);
+    else { if (cur.length) clusters.push(cur); cur = [w]; }
+  }
+  if (cur.length) clusters.push(cur);
+  const units = [], ev = [];
+  clusters.forEach((cl, k) => {
+    const w0 = cl[0], wl = cl[cl.length - 1];
+    const nxt = k + 1 < clusters.length ? clusters[k + 1][0].s : Infinity;
+    const txt = cl.map(x => (st.strip_punct === false ? x.raw : x.raw.replace(PUNCT_STRIP, ''))).join(' ');
+    let end = Math.max(wl.e + 0.10, w0.s + gap);
+    end = Math.max(end, w0.s + Math.min(Array.from(txt).length * 0.04, 0.5));   // long words hold longer
+    if (nxt - wl.e > 0.35) end = Math.min(end + 0.15, nxt - 0.01);              // hold into pauses
+    if (txt && '.,!?…،؟؛'.includes(txt[txt.length - 1])) end = Math.max(end, Math.min(w0.s + 0.25, nxt - 0.01));
+    end = Math.min(Math.max(end, w0.s + 0.05), nxt !== Infinity ? nxt - 0.01 : end);
+    units.push({ pos: k, text: up ? txt.toUpperCase() : txt });
+    ev.push({ s: w0.s, e: end, pos: k });
+  });
+  return { isWord: true, units, lines: [], lineOf: [], palette, pill: false, pop: st.anim === 'pop', events: pvFinalize(ev) };
+}
+/* Timed text (the Edit and Edits previews): the clip's own words, lit when generate_ass would light them. */
+function pvTimedModel(words, st) {
+  const rtl = pvIsRtl(words), up = !!st.uppercase && !rtl;
+  const palette = st.word_colors && st.word_colors.length ? st.word_colors : [st.highlight_color];
+  const ws = words.map((w, pos) => ({ pos, raw: String(w.t), s: +w.s, e: +w.e, score: +w.score || 0 }));
+  if (st.display === 'word') return pvWordModel(ws, st, up, palette);
+  const thr = pvPercentile(ws.map(w => w.score), 85);      // the loudest 15% get the emphasis scale
+  const units = ws.map(w => ({ ...w, text: up ? w.raw.toUpperCase() : w.raw, sc: (w.score >= thr ? st.emphasis_scale : st.active_scale) / 100 }));
+  const m = pvLineModel(units, pvGroup(units, st.max_words_per_line || 4, st.max_chars_per_line || 22, PV_GAP), palette, st);
+  const ev = [];                                       // generate_ass: a word stays lit until the next word, or 0.35 s past its end
+  m.lines.forEach((ln, li) => {
+    const limit = li + 1 < m.lines.length ? m.lines[li + 1][0].s : Infinity;
+    ln.forEach((w, k) => {
+      let end = k + 1 < ln.length ? Math.min(ln[k + 1].s, w.e + 0.35) : w.e + 0.1;
+      end = Math.max(Math.min(end, limit), w.s + 0.05);
+      ev.push({ s: w.s, e: end, pos: w.pos });
+    });
+  });
+  m.events = pvFinalize(ev);
+  return m;
 }
 /* What the phone should show right now: read from the page's own controls (single source of truth). */
 function pvReadState() {
@@ -463,7 +553,7 @@ function pvReadState() {
     captions: $('#optbox input[data-opt="captions"]')?.checked !== false,
   };
 }
-/* Fonts: a family is loaded the first time it is needed, and the phone keeps the old face until the new one is
+/* Fonts: a family is loaded the first time it is needed, and the caption keeps the old face until the new one is
    ready, so text never flashes in a fallback. */
 const pvFontSeen = new Set();
 function pvFontReady(fam, wgt) {
@@ -477,9 +567,85 @@ function pvFontReady(fam, wgt) {
   }
   return false;
 }
-const PV = { home: null, big: null, media: { kind: null, src: '' }, tick: 0, ver: 0 };
+const PV = { home: null, big: null, overlays: new Set(), media: { kind: null, src: '' }, tick: 0, ver: 0 };
 let pvQueued = 0;
 
+/* The caption layer: a `.pv-cap` box holding the lines, with one unit lit at a time. Every surface uses it, so the
+   phone, the enlarged view and the Edit previews show the same text, size, colours and timing. */
+class PvCaps {
+  constructor(cap) {
+    this.cap = cap; this.m = null; this.ck = null;
+    this.lineNo = -1; this.solo = -1; this.litEl = null;
+  }
+  /* Face, size, line spacing, colours, outline, box, alignment and visibility from the resolved style. */
+  style(s, st) {
+    const cap = this.cap, cs = cap.style;
+    const set = (k, v) => cs.setProperty(k, v), S = v => `calc(${v} * 100cqw / 1080)`;
+    const rtl = s.lang === 'ar', fam = (rtl ? st.font_ar : st.font) || 'Arial', wgt = st.bold ? 700 : 400;
+    const hEm = pvFontH(fam);
+    if (pvFontReady(fam, wgt)) {                     // face, size and line spacing change together, once the face is ready
+      set('--ff', `"${fam.replace(/["\\]/g, '')}", Arial, sans-serif`); set('--fw', String(wgt));
+      set('--fs', S(st.size / hEm));                 // em size that gives libass's Fontsize, line by line
+      set('--lh', String(hEm));                      // and its line spacing (the font height)
+    }
+    set('--fst', st.italic ? 'italic' : 'normal');
+    const ow = st.box ? 0 : (st.outline || 0);       // libass draws a box instead of an outline in box mode
+    set('--stkw', ow ? S(ow * 2) : '0px');          // stroke centred on the glyph edge: 2x gives `outline` px outside
+    set('--stc', st.outline_color);
+    set('--tsh', st.shadow && !st.box ? `${S(st.shadow)} ${S(st.shadow)} 0 rgba(0, 0, 0, .5)` : 'none');
+    set('--tc', st.text_color); set('--hl', st.highlight_color);
+    set('--pbg', st.pill_color); set('--ptc', st.pill_text); set('--ppad', S(st.pill_pad));
+    set('--bxbg', hexA(st.box_color, st.box_opacity)); set('--bxpad', S(st.outline || 0));
+    cap.setAttribute('dir', rtl ? 'rtl' : 'ltr');
+    cap.classList.toggle('pv-box', !!st.box);
+    if (st.position === 'center') { cs.top = '50%'; cs.bottom = 'auto'; cs.transform = 'translateY(-50%)'; }   // generate_ass: \an5
+    else if (st.position === 'top') { cs.top = `${260 / 19.2}%`; cs.bottom = 'auto'; cs.transform = 'none'; }  // \an8
+    else { cs.top = 'auto'; cs.bottom = `${pvMargin(s.platform) / 19.2}%`; cs.transform = 'none'; }           // \an2
+    cap.hidden = !s.captions;
+  }
+  setModel(m, ck) {                                  // a new shape of text: rebuilt on the next show()
+    this.m = m; this.ck = ck;
+    this.lineNo = -1; this.solo = -1; this.litEl = null; this.cap.innerHTML = '';
+  }
+  /* Light unit `pos` (a word in Line mode, a word or group in Word mode). -1 shows nothing. */
+  show(pos) {
+    const m = this.m; if (!m) return;
+    if (pos == null || pos < 0 || pos >= m.units.length) { this.clear(); return; }
+    if (m.isWord) {
+      if (this.solo === pos) return;
+      this.solo = pos;
+      this.cap.innerHTML = `<span class="pv-solo" style="color:${m.palette[pos % m.palette.length]}">${esc(m.units[pos].text)}</span>`;
+      return;
+    }
+    const li = m.lineOf[pos];
+    if (this.lineNo !== li) { this.lineNo = li; this.litEl = null; this.cap.innerHTML = this.lineHTML(li); }
+    const next = this.cap.querySelector(`.pv-w[data-i="${pos}"]`);
+    if (next !== this.litEl) this.lit(next);
+  }
+  clear() {
+    if (this.lineNo === -1 && this.solo === -1) return;
+    this.lineNo = -1; this.solo = -1; this.litEl = null; this.cap.innerHTML = '';
+  }
+  lineHTML(li) {
+    const m = this.m;
+    return `<div class="pv-line">${m.lines[li].map(w => `<span class="pv-w${m.pill ? ' pv-pill' : ''}${m.pop ? ' pv-pop' : ''}" data-i="${w.pos}" style="--sc:${w.sc}">${esc(w.text)}</span>`).join(' ')}</div>`;
+  }
+  /* The renderer grows a lit word's advance along with its glyphs, so its neighbours move apart. A CSS scale
+     alone would bite into the spaces, so the lit word gets the same extra room (half on each side). */
+  lit(el) {
+    if (this.litEl) { this.litEl.classList.remove('pv-on'); this.litEl.style.marginLeft = ''; this.litEl.style.marginRight = ''; }
+    this.litEl = el;
+    if (!el) return;
+    el.classList.add('pv-on');
+    const sc = parseFloat(el.style.getPropertyValue('--sc')) || 1;
+    const room = Math.max(0, (sc - 1) * el.offsetWidth / 2).toFixed(2) + 'px';
+    el.style.marginLeft = room; el.style.marginRight = room;
+  }
+  /* After a style change the lit word is measured again: its size or face may have moved. */
+  remeasure() { if (this.litEl) this.lit(this.litEl); }
+}
+
+/* A phone: the frame (blurred backdrop, real video or thumbnail, framing) with the caption layer on top. */
 class PvPhone {
   constructor(root, big) {
     this.root = root; this.big = big;
@@ -489,11 +655,10 @@ class PvPhone {
       + '<p class="pv-note" hidden></p><div class="pv-cap" aria-hidden="true" hidden></div>'
       + (big ? '' : `<button type="button" class="pv-expand" data-pv-act="enlarge" aria-label="Enlarge preview" title="Enlarge preview">${ico('expand')}</button>`);
     this.bg = root.querySelector('.pv-bg'); this.v = root.querySelector('video.pv-fg');
-    this.img = root.querySelector('img.pv-fg'); this.note = root.querySelector('.pv-note'); this.cap = root.querySelector('.pv-cap');
+    this.img = root.querySelector('img.pv-fg'); this.note = root.querySelector('.pv-note');
+    this.caps = new PvCaps(root.querySelector('.pv-cap'));
     this.kind = null; this.src = ''; this.ar = 16 / 9; this.failed = false;
-    this.s = null; this.st = null; this.key = ''; this.ck = ''; this.bgOn = false; this.looping = false; this.dead = false;
-    this.words = []; this.lines = []; this.lineOf = []; this.palette = ['#FFFFFF']; this.isWord = false; this.pill = false; this.pop = true;
-    this.lineNo = -1; this.solo = -1; this.litEl = null;
+    this.s = null; this.st = null; this.key = ''; this.bgOn = false; this.looping = false; this.dead = false;
     const v = this.v;
     v.addEventListener('loadedmetadata', () => this.geom());
     v.addEventListener('loadeddata', () => { this.geom(); v.play().catch(() => {}); });
@@ -559,101 +724,85 @@ class PvPhone {
       : !this.kind ? 'Find a video for real frames' : '';
     this.note.textContent = text; this.note.hidden = !text;
   }
-  /* Rebuild the caption text only when its structure changes (words, lines, case, display mode). Colours,
-     sizes and positions are CSS variables, so dragging a control never restarts the word animation. */
-  rebuild(s, st) {
-    const rtl = s.lang === 'ar', up = !!st.uppercase && !rtl;
-    const raw = PV_SAMPLE[s.lang] || PV_SAMPLE.en;
-    this.isWord = st.display === 'word';
-    this.pill = !this.isWord && st.highlight_mode === 'pill';
-    this.pop = st.anim === 'pop';
-    if (this.isWord) {
-      this.words = raw.map((t, i) => {
-        const txt = st.strip_punct === false ? t : t.replace(PUNCT_STRIP, '');
-        return { i, text: up ? txt.toUpperCase() : txt };
-      });
-      this.palette = st.word_colors && st.word_colors.length ? st.word_colors : [st.highlight_color];
-      this.lines = []; this.lineOf = [];
-    } else {
-      const thr = pvPercentile(PV_ENERGY, 85);
-      this.words = raw.map((t, i) => ({
-        i, raw: t, text: up ? t.toUpperCase() : t,
-        sc: (PV_ENERGY[i] >= thr ? st.emphasis_scale : st.active_scale) / 100,
-      }));
-      this.lines = pvGroup(this.words, st.max_words_per_line || 4, st.max_chars_per_line || 22);
-      this.lineOf = [];
-      this.lines.forEach((ln, li) => ln.forEach(w => { this.lineOf[w.i] = li; }));
-    }
-    this.cap.setAttribute('dir', rtl ? 'rtl' : 'ltr');
-    this.cap.classList.toggle('pv-box', !!st.box);
-    this.lineNo = -1; this.solo = -1; this.litEl = null;
-    this.cap.innerHTML = '';
-  }
-  lineHTML(li) {
-    return `<div class="pv-line">${this.lines[li].map(w => `<span class="pv-w${this.pill ? ' pv-pill' : ''}${this.pop ? ' pv-pop' : ''}" data-i="${w.i}" style="--sc:${w.sc}">${esc(w.text)}</span>`).join(' ')}</div>`;
-  }
-  /* One sample word lit: word mode shows that word alone in its palette colour; line mode keeps the line and
-     lights the active word. */
-  step(n) {
-    if (this.dead || !this.words.length) return;
-    const idx = n % this.words.length;
-    if (this.isWord) {
-      if (this.solo === idx) return;
-      this.solo = idx;
-      this.cap.innerHTML = `<span class="pv-solo" style="color:${this.palette[idx % this.palette.length]}">${esc(this.words[idx].text)}</span>`;
-      return;
-    }
-    const li = this.lineOf[idx];
-    if (this.lineNo !== li) { this.lineNo = li; this.litEl = null; this.cap.innerHTML = this.lineHTML(li); }
-    const next = this.cap.querySelector(`.pv-w[data-i="${idx}"]`);
-    if (next !== this.litEl) this.lit(next);
-  }
-  /* The renderer grows a lit word's advance along with its glyphs, so its neighbours move apart. A CSS scale
-     alone would bite into the spaces, so the lit word gets the same extra room (half on each side). */
-  lit(el) {
-    if (this.litEl) { this.litEl.classList.remove('pv-on'); this.litEl.style.marginLeft = ''; this.litEl.style.marginRight = ''; }
-    this.litEl = el;
-    if (!el) return;
-    el.classList.add('pv-on');
-    const sc = parseFloat(el.style.getPropertyValue('--sc')) || 1;
-    const room = Math.max(0, (sc - 1) * el.offsetWidth / 2).toFixed(2) + 'px';
-    el.style.marginLeft = room; el.style.marginRight = room;
-  }
   apply(s, st) {
     const key = `${PV.ver}|${JSON.stringify([s, st])}`;
     if (key === this.key) return;
     this.key = key; this.s = s; this.st = st;
-    const set = (k, v) => this.cap.style.setProperty(k, v), S = v => `calc(${v} * 100cqw / 1080)`;
-    const rtl = s.lang === 'ar', fam = (rtl ? st.font_ar : st.font) || 'Arial', wgt = st.bold ? 700 : 400;
-    const hEm = pvFontH(fam);
-    if (pvFontReady(fam, wgt)) {                     // face, size and line spacing change together, once the face is ready
-      set('--ff', `"${fam.replace(/["\\]/g, '')}", Arial, sans-serif`); set('--fw', String(wgt));
-      set('--fs', S(st.size / hEm));                 // em size that gives libass's Fontsize, line by line
-      set('--lh', String(hEm));                      // and its line spacing (the font height)
-    }
-    set('--fst', st.italic ? 'italic' : 'normal');
-    const ow = st.box ? 0 : (st.outline || 0);       // libass draws a box instead of an outline in box mode
-    set('--stkw', ow ? S(ow * 2) : '0px');          // stroke centred on the glyph edge: 2x gives `outline` px outside
-    set('--stc', st.outline_color);
-    set('--tsh', st.shadow && !st.box ? `${S(st.shadow)} ${S(st.shadow)} 0 rgba(0, 0, 0, .5)` : 'none');
-    set('--tc', st.text_color); set('--hl', st.highlight_color);
-    set('--pbg', st.pill_color); set('--ptc', st.pill_text); set('--ppad', S(st.pill_pad));
-    set('--bxbg', hexA(st.box_color, st.box_opacity)); set('--bxpad', S(st.outline || 0));
-    const cs = this.cap.style;                       // alignment as in generate_ass: lower = \an2, centre = \an5, top = \an8
-    if (st.position === 'center') { cs.top = '50%'; cs.bottom = 'auto'; cs.transform = 'translateY(-50%)'; }
-    else if (st.position === 'top') { cs.top = `${260 / 19.2}%`; cs.bottom = 'auto'; cs.transform = 'none'; }
-    else { cs.top = 'auto'; cs.bottom = `${pvMargin(s.platform) / 19.2}%`; cs.transform = 'none'; }
-    const ck = [s.lang, st.display, st.uppercase, st.max_words_per_line, st.max_chars_per_line, st.strip_punct,
-      st.highlight_mode, st.box, st.anim, st.active_scale, st.emphasis_scale, JSON.stringify(st.word_colors), st.highlight_color].join('|');
-    if (ck !== this.ck) { this.ck = ck; this.rebuild(s, st); }
-    if (this.isWord && this.solo >= 0) {             // palette edits recolour the lit word in place
-      const sp = this.cap.querySelector('.pv-solo');
-      if (sp) sp.style.color = this.palette[this.solo % this.palette.length];
-    }
-    this.cap.hidden = !s.captions;
+    this.caps.style(s, st);
+    const ck = JSON.stringify([s.lang, st.display, st.uppercase, st.max_words_per_line, st.max_chars_per_line, st.strip_punct,
+      st.highlight_mode, st.box, st.anim, st.active_scale, st.emphasis_scale, st.word_colors, st.highlight_color]);
+    if (ck !== this.caps.ck) this.caps.setModel(pvSampleModel(s.lang, st), ck);
     this.paintNote(); this.applyFrame();
     this.step(PV.tick);
-    if (this.litEl) this.lit(this.litEl);           // re-measure: the size or face may have changed
+    this.caps.remeasure();
+  }
+  step(n) {                                           // the sample phrase: one unit per tick
+    const m = this.caps.m;
+    if (this.dead || !m || !m.units.length) return;
+    this.caps.show(n % m.units.length);
+  }
+}
+
+/* A caption layer over a real video: the Edit modal and the Edits page. Its words are the clip's transcript and its
+   clock is the video's own. The source's timeline is absolute, so no clip offset is added. */
+class PvOverlay {
+  constructor({ host, video, read, words }) {
+    this.host = host; this.video = video; this.read = read; this.wordsOf = words;
+    this.cap = document.createElement('div');
+    this.cap.className = 'pv-cap'; this.cap.setAttribute('aria-hidden', 'true'); this.cap.hidden = true;
+    host.appendChild(this.cap);
+    this.caps = new PvCaps(this.cap);
+    this.key = ''; this.dead = false; this.looping = false;
+    this.onclock = () => this.tick(); this.onplay = () => this.play();
+    ['loadeddata', 'seeked', 'timeupdate', 'pause', 'emptied'].forEach(ev => video.addEventListener(ev, this.onclock));
+    video.addEventListener('play', this.onplay);
+    PV.overlays.add(this);
+    this.refresh();
+  }
+  destroy() {
+    if (this.dead) return;
+    this.dead = true; PV.overlays.delete(this); this.cap.remove();
+    ['loadeddata', 'seeked', 'timeupdate', 'pause', 'emptied'].forEach(ev => this.video.removeEventListener(ev, this.onclock));
+    this.video.removeEventListener('play', this.onplay);
+  }
+  /* Any control or word change (from pvApply): restyle, and rebuild the text only when its shape changed. */
+  refresh() {
+    if (this.dead) return;
+    const r = this.read(); if (!r) return;
+    const words = (this.wordsOf() || []).filter(w => String(w.t || '').trim());
+    const ws = words.map(w => [w.t, w.s, w.e, w.score]);
+    const s = { lang: pvIsRtl(words) ? 'ar' : 'en', captions: !!r.captions && words.length > 0, platform: r.platform };
+    const st = resolveCap(r.preset, r.ov);
+    const key = `${PV.ver}|${JSON.stringify([s, st, ws])}`;
+    if (key === this.key) return;
+    this.key = key;
+    this.caps.style(s, st);
+    const ck = JSON.stringify([s.lang, st.display, st.uppercase, st.max_words_per_line, st.max_chars_per_line, st.strip_punct,
+      st.highlight_mode, st.box, st.anim, st.active_scale, st.emphasis_scale, st.word_colors, st.highlight_color, st.min_gap, ws]);
+    if (ck !== this.caps.ck) this.caps.setModel(pvTimedModel(words, st), ck);
+    this.tick();
+    this.caps.remeasure();
+  }
+  tick() {
+    const m = this.caps.m;
+    if (this.dead || !m) return;
+    const t = this.video.currentTime;
+    let pos = -1;
+    for (const ev of m.events || []) { if (t < ev.s) break; if (t < ev.e) { pos = ev.pos; break; } }
+    this.caps.show(pos);
+  }
+  /* While the video plays, the lit word follows each presented frame. */
+  play() {
+    if (this.looping || this.dead) return;
+    this.looping = true;
+    const v = this.video;
+    const frame = () => {
+      if (this.dead) return;
+      this.tick();
+      if (v.paused || v.ended) { this.looping = false; return; }
+      if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(frame); else requestAnimationFrame(frame);
+    };
+    frame();
   }
 }
 
@@ -663,13 +812,16 @@ function pvSync() {                                  // any change: one repaint 
 function pvLive() {
   if (PV.home && (PV.home.dead || !PV.home.root.isConnected)) { PV.home.destroy(); PV.home = null; }
   if (PV.big && (PV.big.dead || !PV.big.root.isConnected)) { PV.big.destroy(); PV.big = null; }
+  PV.overlays.forEach(o => { if (!o.host.isConnected) o.destroy(); });
 }
 function pvApply() {
   pvLive();
-  if (!PV.home && !PV.big) return;
-  const s = pvReadState(); if (!s) return;
-  const st = resolveCap(s.preset, s.ov);
-  [PV.home, PV.big].forEach(p => { if (p) p.apply(s, st); });
+  const s = pvReadState();
+  if (s && (PV.home || PV.big)) {
+    const st = resolveCap(s.preset, s.ov);
+    [PV.home, PV.big].forEach(p => { if (p) p.apply(s, st); });
+  }
+  PV.overlays.forEach(o => o.refresh());
 }
 function pvSetMedia(kind, src) {                     // a found video, a dropped file, or a thumbnail (kind 'image')
   PV.media = { kind: kind || null, src: kind ? (src || '') : '' };
@@ -708,7 +860,7 @@ document.addEventListener('click', e => {
   else if (act === 'close') closeModal();
   else if (act === 'fs') { const p = $('#pvBig')?.requestFullscreen?.(); if (p && p.catch) p.catch(() => {}); }
 });
-setInterval(() => {                                  // one shared clock for every phone
+setInterval(() => {                                  // one shared clock for the sample phrase on every phone
   pvLive();
   if (!PV.home && !PV.big) return;
   PV.tick++;
@@ -856,7 +1008,6 @@ document.addEventListener('click', e => {
     const hid = $('.stylePreset', scope); if (hid) hid.value = card.dataset.k;
     const t = (card.dataset.tpl !== undefined && card.dataset.tpl !== '') ? getTpls()[+card.dataset.tpl] : null;
     paintStyles(scope); previewReal(scope); paintPlan();
-    if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
     scope.querySelectorAll('.custwrap').forEach(c => {
       c.innerHTML = customizeHTML(t ? (t.overrides || {}) : readStyleRoot(scope).overrides, card.dataset.k);
     });
@@ -885,7 +1036,7 @@ function touchedChange(el) {
   if (el.dataset?.ov || (el.dataset?.opt && el.closest('.optbody,.modal')?.querySelector('.styleGrid'))) {
     const scope = el.closest('.optbody,.modal,#styleCard'); if (scope) previewReal(scope);
   }
-  if (el.dataset?.ov && editCtx && typeof refreshLiveOverlay === 'function') refreshLiveOverlay();
+  if (el.closest?.('.modal,.edside,#ed-words,#edx-words')) pvSync();
   if (el.closest?.('#styleCard,#optbox,.custwrap')) capChanged();
 }
 /* Clip cards: hover to preview (muted), rewind when the pointer leaves. */
@@ -1795,34 +1946,11 @@ async function refreshProject(id) {
 }
 
 /* ----- edit modal ----- */
-let refreshLiveOverlay = null;
-function mountLiveCaptions(video, words, st, start0) {
-  const wrap = video.parentElement; wrap.style.position = 'relative'; wrap.classList.add('livewrap');
-  let el = $('.cap-live', wrap);
-  if (!el) { el = document.createElement('div'); el.className = 'cap-live'; wrap.appendChild(el); }
-  const size = `calc(${(st.size || 72)} * 100cqw / 1080)`;
-  const pos = st.position === 'center' ? 'top:38%;bottom:auto' : st.position === 'top' ? 'top:12%;bottom:auto' : '';
-  el.setAttribute('style', `font-family:'${st.font || 'Arial'}',Arial;font-weight:${st.bold === false ? 400 : 700};` +
-    `color:${st.text_color || '#fff'};font-size:${size};${pos};` +
-    (st.shadow === 0 ? '' : `text-shadow:0 .06em .12em #000a;`));
-  const per = st.max_words_per_line || 4;
-  const step = () => {
-    if (!document.contains(el)) return;
-    const t = video.currentTime + start0;
-    const i = words.findIndex(w => t >= w.s && t < w.e);
-    if (i >= 0) {
-      const a = Math.max(0, i - (i % per)), line = words.slice(a, a + per);
-      el.innerHTML = line.map((w, j) => `<span class="${a + j === i ? 'on' : ''}">${esc(st.uppercase === false ? w.t : w.t.toUpperCase())}</span>`).join(' ');
-    } else el.textContent = '';
-    video.requestVideoFrameCallback ? video.requestVideoFrameCallback(step) : requestAnimationFrame(step);
-  };
-  step();
-}
 function openEdit(p, c, tab = 'trim') {
   const cs = c.style || p.settings.caption_style || {};
   const m = openModal(`<h3>Edit clip #${c.rank}</h3><p class="desc">Adjust where the clip starts and ends, fix caption words, or change the title. Re-rendering uses your cached transcript.</p>
     <div class="tabs"><button class="on" data-tab="trim">Trim</button><button data-tab="caps">Captions</button><button data-tab="info">Title &amp; tags</button></div>
-    <div data-pane="trim"><div class="edgrid"><div><video id="ed-src" controls preload="metadata" src="/source/${p.video_id}"></video>
+    <div data-pane="trim"><div class="edgrid"><div><div class="livewrap"><video id="ed-src" controls preload="metadata" src="/source/${p.video_id}"></video></div>
         <div class="note" id="ed-vnote">Scrub the source video, then use “Set start/end from playhead”.</div></div>
       <div><div class="trimrow">
         <div class="fieldx"><span class="fl">Start (s)</span><input type="number" id="ed-start" step="0.1" min="0" value="${c.start}"></div>
@@ -1856,22 +1984,20 @@ function openEdit(p, c, tab = 'trim') {
   $$('.tabs button', m).forEach(b => b.onclick = () => showTab(b.dataset.tab));
   showTab(tab);
   editCtx = { pid: p.id, rank: c.rank, t: c.start + 1 };
-  const syncCtx = () => { editCtx = { pid: p.id, rank: c.rank, t: c.start + v.currentTime }; previewReal(m); };
+  const syncCtx = () => { editCtx = { pid: p.id, rank: c.rank, t: v.currentTime }; previewReal(m); };
   v.addEventListener('seeked', syncCtx); v.addEventListener('pause', syncCtx);
   mountStyles(m, cs.preset || 'bold-pop');
   previewReal(m);
   const words = new Map(); let wordsArr = []; const timings = {};
   const liveOn = () => $('#ed-livecap', m)?.checked !== false;
-  $('#ed-livecap', m).onchange = () => {
-    const wrap = v.parentElement, ov = $('.cap-live', wrap);
-    if (!liveOn() && ov) ov.remove();
-    else refreshLiveOverlay && refreshLiveOverlay();
+  const burnOn = () => $('[data-opt="ed-cap"]', m)?.checked !== false;
+  const editWords = () => {                          // the words as they now read, so a typed fix shows at once
+    const cur = new Map(); $$('#ed-words input', m).forEach(i => cur.set(String(i.dataset.i), i.value.trim()));
+    return wordsArr.map(w => (cur.get(String(w.i)) ? { ...w, t: cur.get(String(w.i)) } : w));
   };
-  refreshLiveOverlay = () => {
-    if (!liveOn() || !wordsArr.length) return;
-    const st = { ...(STYLES.base || {}), ...(STYLES.presets?.[$('.stylePreset', m)?.value] || {}) };
-    mountLiveCaptions(v, wordsArr, st, 0);
-  };
+  const wrap = v.parentElement;                      // .livewrap: the video's own box, where the caption is placed
+  new PvOverlay({ host: wrap, video: v, words: editWords,
+    read: () => { const d = readStyleRoot(m); return { preset: d.preset, ov: d.overrides, captions: liveOn() && burnOn(), platform: clipPlatform(p, c) }; } });
   async function loadWords() {
     const box = $('#ed-words', m); box.innerHTML = '<span class="note">Loading words…</span>';
     try {
@@ -1883,7 +2009,7 @@ function openEdit(p, c, tab = 'trim') {
         box.appendChild(inp);
       });
       if (!d.words.length) box.innerHTML = '<span class="note">No words in this range.</span>';
-      else refreshLiveOverlay();
+      else pvSync();
       paintTimeline();
     } catch (e) { box.innerHTML = `<span class="note">${esc(e.message)}</span>`; }
   }
@@ -2057,7 +2183,7 @@ function openExport(pid, ranks, batch) {
   };
 }
 /* ---------- Edits workspace ---------- */
-const Edits = { active: false, pid: null, rank: null, words: [], wav: null, dirty: false, undo: [], redo: [] };
+const Edits = { active: false, pid: null, rank: null, words: [], wav: null, dirty: false, undo: [], redo: [], overlay: null, loop: null };
 function viewEdits() {
   Edits.active = true;
   document.removeEventListener('keydown', edxKeys);
@@ -2137,12 +2263,20 @@ function viewEdits() {
   vEl.addEventListener('timeupdate', edxTick);
   vEl.addEventListener('seeked', edxTick);
   $('#edx-seek').addEventListener('input', e => { if (vEl.duration) vEl.currentTime = (+e.target.value / 1000) * vEl.duration; });
-  $('#edx-sets').onclick = () => { $('#edx-s').value = ((edxClip()?.start || 0) + vEl.currentTime).toFixed(2); edxChanged(); };
-  $('#edx-sete').onclick = () => { $('#edx-e').value = ((edxClip()?.start || 0) + vEl.currentTime).toFixed(2); edxChanged(); };
-  $('#edx-loop').onclick = () => {
+  $('#edx-sets').onclick = () => { $('#edx-s').value = vEl.currentTime.toFixed(2); edxChanged(); };
+  $('#edx-sete').onclick = () => { $('#edx-e').value = vEl.currentTime.toFixed(2); edxChanged(); };
+  $('#edx-loop').onclick = () => {                  // the source's own timeline: loop between the trim points
     const c = edxClip(); if (!c) return;
-    vEl.currentTime = 0; vEl.play().catch(() => {});
-    vEl.ontimeupdate = () => { edxTick(); if (vEl.currentTime >= ((+$('#edx-e').value || c.end) - c.start)) vEl.currentTime = 0; };
+    const s0 = parseFloat($('#edx-s').value), s1 = parseFloat($('#edx-e').value);
+    const from = isNaN(s0) ? c.start : s0, to = isNaN(s1) ? c.end : s1;
+    const token = Edits.loop = {};                 // one watcher at a time; picking another clip ends it
+    vEl.currentTime = from; vEl.play().catch(() => {});
+    const watch = () => {                          // checked every frame, so the loop never runs past its end
+      if (Edits.loop !== token) return;
+      if (!vEl.paused && (vEl.currentTime >= to || vEl.currentTime < from - 0.05)) vEl.currentTime = from;
+      requestAnimationFrame(watch);
+    };
+    watch();
   };
   $('.edside').addEventListener('click', e => { if (e.target.closest('.seg')) { edxSnapshot(); edxDirty(true); edxOverlay(); } });
   $('.edside').addEventListener('change', e => { if (e.target.matches('input,select')) { edxSnapshot(); edxDirty(true); edxOverlay(); } });
@@ -2152,6 +2286,7 @@ function viewEdits() {
     vEl.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * vEl.duration;
   });
   document.addEventListener('keydown', edxKeys);
+  edxBindOverlay();
   edxDirty(false);
   edxSelect(projs[0].id, projs[0].clips[0].rank);
 }
@@ -2167,7 +2302,7 @@ function edxNote(msg) {
   n.hidden = !msg; n.textContent = msg || '';
 }
 async function edxSelect(pid, rank) {
-  Edits.pid = pid; Edits.rank = rank; Edits.undo = []; Edits.redo = [];
+  Edits.pid = pid; Edits.rank = rank; Edits.undo = []; Edits.redo = []; Edits.loop = null;
   if (!edxProject()) return;
   $('#edx-proj').value = pid;
   $('#edx-clip').innerHTML = edxProject().clips.map(x => `<option value="${x.rank}" ${x.rank === rank ? 'selected' : ''}>#${x.rank} ${esc(x.title.slice(0, 48))}</option>`).join('');
@@ -2205,12 +2340,18 @@ function paintShots(c) {
     `<span class="shot">#${i + 1} ${fmtT(s.start)}–${fmtT(s.end)} · ${esc(s.layout || 'auto')}</span>`).join('')
     : '<span class="hint">No shot data. Layout is automatic.</span>';
 }
-function edxStyle() {
-  return { ...(STYLES.base || {}), ...(STYLES.presets?.[$('#edx-preset')?.value] || {}) };
+/* Every edit refreshes the caption layer (pvSync), so the Edits overlay is always current. */
+function edxOverlay() { pvSync(); }
+function edxBindOverlay() {
+  if (Edits.overlay) Edits.overlay.destroy();
+  Edits.overlay = new PvOverlay({
+    host: $('#edx-wrap'), video: $('#edx-v'),
+    read: () => { const side = $('.edside'); if (!side) return null; const d = readStyleRoot(side); return { preset: d.preset, ov: d.overrides, captions: true, platform: clipPlatform(edxProject(), edxClip()) }; },
+    words: () => Edits.words,
+  });
 }
-function edxOverlay() {
-  const v = $('#edx-v'); if (!v || !Edits.words.length) return;
-  mountLiveCaptions(v, Edits.words, edxStyle(), edxClip()?.start || 0);
+function clipPlatform(p, c) {                       // the platform whose caption margin applies: the clip's first export
+  return (c && c.platforms && c.platforms[0]) || (p && p.settings && p.settings.platform) || 'shorts';
 }
 function paintEdxWords() {
   const box = $('#edx-words'); if (!box) return;
@@ -2218,6 +2359,7 @@ function paintEdxWords() {
   Edits.words.forEach(w => {
     const inp = document.createElement('input');
     inp.value = w.t; inp.dataset.i = w.i; inp.size = Math.max(3, w.t.length); inp.dir = 'auto'; inp.title = fmtT(w.s);
+    inp.addEventListener('input', () => { w.t = inp.value; pvSync(); });
     inp.addEventListener('change', () => { w.t = inp.value; edxChanged(); });
     box.appendChild(inp);
   });
@@ -2322,7 +2464,7 @@ async function edxSave() {
 async function edxAccurate() {
   const v = $('#edx-v'); if (!v) return;
   const c = edxClip(); if (!c) return;
-  const t = c.start + v.currentTime;
+  const t = v.currentTime;
   const img = $('#edx-img');
   try {
     const r = await api(`/api/projects/${Edits.pid}/clips/${Edits.rank}/caption-preview`, { method: 'POST', body: {
@@ -2467,7 +2609,6 @@ const actions = {
   seg(b) { $$('button', b.parentElement).forEach(x => x.classList.toggle('on', x === b));
     if (b.parentElement.dataset.ov) b.parentElement.dataset.touched = '1';
     const scope = b.closest('.optbody,.modal,#styleCard'); if (scope && $('.styleGrid', scope)) previewReal(scope);
-    if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
     if (b.closest('#optbox')) paintPlan();
     if (b.closest('#styleCard,#optbox,.custwrap')) capChanged(); },
   'cust-reset'(b) {                                   // back to the preset: no overrides at all
@@ -2478,7 +2619,6 @@ const actions = {
     wrap.innerHTML = customizeHTML({}, $('.stylePreset', scope)?.value || 'bold-pop');
     previewReal(scope);
     if (edits) { edxDirty(true); edxOverlay(); }
-    if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
     capChanged();
   },
   'rm-upload'() { clearPending(); resetFound(); },
