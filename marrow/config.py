@@ -33,8 +33,9 @@ DEFAULTS = {
     },
     "render": {
         "layout": "crop",
+        "split_screen": True,
         "encoder": "auto",
-        "preset": "fast",
+        "preset": "veryfast",
         "crf": 20,
         "fps": 30,
         "loudnorm": True,

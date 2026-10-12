@@ -34,8 +34,8 @@ const ICON = {
 };
 const ico = (n, c = '') => `<svg class="i ${c}" viewBox="0 0 24 24" aria-hidden="true">${ICON[n] || ''}</svg>`;
 
-/* ---------- theme & accent (the sidebar button is the quick toggle; Settings has the full choice) ---------- */
-const themeChoice = () => { try { return localStorage.getItem('theme') || 'system'; } catch (_) { return 'system'; } };
+/* ---------- monochrome interface theme ---------- */
+const themeChoice = () => { try { return localStorage.getItem('theme') || 'dark'; } catch (_) { return 'dark'; } };
 const sysLight = () => matchMedia('(prefers-color-scheme: light)').matches;
 function paintThemeBtn() {
   const b = document.getElementById('themeBtn'); if (!b) return;
@@ -49,15 +49,13 @@ function setTheme(t) {
   try { localStorage.setItem('theme', choice); } catch (_) {}
   paintThemeBtn();
 }
-function setAccent(a) {
-  const v = a && a !== 'graphite' ? a : '';
-  if (v) document.documentElement.dataset.accent = v; else delete document.documentElement.dataset.accent;
-  try { localStorage.setItem('accent', v || 'graphite'); } catch (_) {}
+function setAccent() {
+  // Marrow's interface is intentionally monochrome; discard saved legacy accents.
+  delete document.documentElement.dataset.accent;
+  try { localStorage.removeItem('accent'); } catch (_) {}
 }
 setTheme(themeChoice());
-let _accent = 'violet';
-try { _accent = localStorage.getItem('accent') || 'violet'; } catch (_) {}
-setAccent(_accent);
+setAccent();
 document.getElementById('themeBtn').addEventListener('click', () => {
   setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
 });
@@ -266,41 +264,71 @@ function customizeHTML(ov, presetKey) {
     ${wordMode ? `<div class="cell"><label>Strip punctuation</label><label class="tog compact"><input type="checkbox" data-ov="strip_punct" ${ov.strip_punct === false ? '' : 'checked'}><span class="knob"></span></label></div>` : ''}
   </div>`;
 }
-/* Home's caption-style block: the preset carousel plus an interactive live 9:16 phone preview on the right. */
+/* Home gets its own spacious format browser; the compact carousel remains shared by edit/regenerate views. */
 function styleSectionHTML(preset) {
-  return stylePickerHTML(preset, `
-    <div class="phone preview-phone layout-crop" id="homePhone" role="region" aria-label="Real-time video preview">
-      <video id="homePrevBg" class="prev-bg" muted playsinline loop preload="auto"></video>
-      <video id="homePrev" class="prev-fg" muted playsinline loop preload="auto"></video>
-      <div class="phone-placeholder" id="homePrevPlaceholder">
-        <div class="ph-backdrop"><div class="ph-glow"></div><div class="ph-grid"></div></div>
-        <div class="ph-badge">${ico('sparkle')}<span>Live Preview</span></div>
-        <p class="phone-empty" id="homePrevNote">Paste a link or drop a video to preview on real frames</p>
-      </div>
-      <div class="livecap cap" id="homeCap"></div>
-      <div class="prev-top-bar" aria-hidden="true">
-        <span class="prev-badge ratio-badge">9:16</span>
-        <span class="prev-badge frame-badge" id="prevFrameBadge">Crop</span>
-        <span class="prev-badge style-badge" id="prevStyleBadge">Bold Pop</span>
-      </div>
-      <div class="prev-controls">
-        <button type="button" class="prev-ctrl-btn" id="homePrevPlayBtn" title="Play / Pause" aria-label="Play or pause preview">
-          <svg class="i" viewBox="0 0 24 24" fill="currentColor">${ICON.play}</svg>
-        </button>
-        <button type="button" class="prev-ctrl-btn" id="homePrevMuteBtn" title="Mute / Unmute" aria-label="Toggle mute">
-          <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
-        </button>
-        <button type="button" class="prev-ctrl-btn prev-expand-btn" id="homePrevExpandBtn" title="Expand preview (Larger / Fullscreen inspection)" aria-label="Expand preview">
-          ${ico('expand')}
-        </button>
-      </div>
+  return `<div class="home-style-picker" data-style-tab="quick">
+    <input type="hidden" class="stylePreset" value="${esc(preset || 'bold-pop')}">
+    <div class="home-style-toolbar">
+      <div class="home-style-current"><span class="home-style-current-mark" aria-hidden="true">✓</span><div><span class="home-mini-label">SELECTED TREATMENT</span><b data-home-selected-style>Bold Pop</b></div></div>
+      <div class="home-style-tools"><span class="home-mini-label">SAMPLE LANGUAGE</span><div class="seg sm sampleLang" role="group" aria-label="Caption sample language"><button type="button" data-l="en" class="on">English</button><button type="button" data-l="ar">العربية</button></div></div>
     </div>
-  `);
+    <div class="home-style-layout">
+      <div class="home-style-groups">
+        <section class="home-format-group" aria-labelledby="oneWordHeading">
+          <div class="home-format-head"><span class="home-format-index">01</span><div><h4 id="oneWordHeading">One-word captions</h4><p>One clear word at a time, paced to the speaker.</p></div><span class="home-format-count" data-format-count="word">02 STYLES</span></div>
+          <div class="styles styleGrid home-style-grid" data-style-category="word"></div>
+        </section>
+        <section class="home-format-group" aria-labelledby="lineHeading">
+          <div class="home-format-head"><span class="home-format-index">02</span><div><h4 id="lineHeading">Multi-word &amp; line captions</h4><p>Readable phrases with word emphasis, motion, or a clean static finish.</p></div><span class="home-format-count" data-format-count="line">09 STYLES</span></div>
+          <div class="styles styleGrid home-style-grid" data-style-category="line"></div>
+        </section>
+        <details class="home-saved-styles">
+          <summary><span>My saved templates</span><small data-saved-count>Manage your own looks</small><span class="home-saved-chevron" aria-hidden="true">+</span></summary>
+          <div class="styles styleGrid home-style-grid" data-style-category="my"></div>
+        </details>
+      </div>
+      <aside class="home-style-preview" aria-label="Caption preview">
+        <div class="home-preview-heading"><div><span class="home-mini-label">LIVE PREVIEW</span><p>On your source footage</p></div><span class="home-preview-format">9:16</span></div>
+        <div class="phone preview-phone layout-crop" id="homePhone" role="region" aria-label="Real-time video preview">
+          <video id="homePrevBg" class="prev-bg" muted playsinline loop preload="auto"></video>
+          <video id="homePrev" class="prev-fg" muted playsinline loop preload="auto"></video>
+          <div class="phone-placeholder" id="homePrevPlaceholder">
+            <div class="ph-backdrop"><div class="ph-glow"></div><div class="ph-grid"></div></div>
+            <div class="ph-badge">${ico('sparkle')}<span>Live Preview</span></div>
+          </div>
+          <div class="livecap cap" id="homeCap"></div>
+          <div class="prev-top-bar" aria-hidden="true">
+            <span class="prev-badge ratio-badge">9:16</span>
+            <span class="prev-badge frame-badge" id="prevFrameBadge">Crop</span>
+            <span class="prev-badge style-badge" id="prevStyleBadge">Bold Pop</span>
+          </div>
+          <div class="prev-controls">
+            <button type="button" class="prev-ctrl-btn" id="homePrevPlayBtn" title="Play / Pause" aria-label="Play or pause preview">
+              <svg class="i" viewBox="0 0 24 24" fill="currentColor">${ICON.play}</svg>
+            </button>
+            <button type="button" class="prev-ctrl-btn" id="homePrevMuteBtn" title="Mute / Unmute" aria-label="Toggle mute">
+              <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+            </button>
+            <button type="button" class="prev-ctrl-btn prev-expand-btn" id="homePrevExpandBtn" title="Expand preview (Larger / Fullscreen inspection)" aria-label="Expand preview">
+              ${ico('expand')}
+            </button>
+          </div>
+        </div>
+        <p class="home-preview-note">Add a source to see this caption treatment on real footage.</p>
+      </aside>
+    </div>
+  </div>`;
 }
 function optsPanel(o, compact) {
   const cs = o.caption_style || { preset: 'bold-pop', overrides: {} };
   const ov = cs.overrides || {};
   const s = state.system;
+  const vision = s?.vision || {};
+  const visionReady = !!(vision.opencv && vision.model);
+  const visionHint = !s ? 'Checking visual framing…'
+    : !vision.opencv ? 'OpenCV is missing — install opencv-python-headless.'
+    : !vision.model ? 'YuNet face model downloads automatically on first use.'
+    : 'Ready — only co-present faces trigger a split.';
   const ready = !!(s && s.ollama.reachable && s.ollama.model_ready);
   const llmHint = !s ? 'Checking Ollama…'
     : ready ? 'Ready: judges hook, payoff and clarity'
@@ -309,7 +337,17 @@ function optsPanel(o, compact) {
   const dur = o.duration || 45;
   return `<div class="optbody">
     <div class="opt-group"><span class="fl">Output</span>${seg('platform', [['shorts', 'Shorts'], ['reels', 'Reels'], ['both', 'Both']], o.platform)}</div>
-    <div class="opt-group"><span class="fl">Framing</span>${seg('layout', [['crop', 'Center crop'], ['blur_fit', 'Blur fit']], o.layout)}</div>
+    <div class="opt-group"><span class="fl">Fallback framing</span>${seg('layout', [['crop', 'Center crop'], ['blur_fit', 'Blur fit']], o.layout)}</div>
+    <div class="opt-group">
+      <span class="fl">Multi-speaker framing</span>
+      <label class="speaker-mode">
+        <input type="checkbox" data-opt="split_screen" ${o.split_screen === false ? '' : 'checked'} aria-label="Enable split-screen for multi-speaker scenes">
+        <span class="speaker-diagram" aria-hidden="true"><i></i><i></i></span>
+        <span class="tl"><b>Stack both speakers</b><small>Co-present two-shots use top/bottom panels; solo cuts stay face-tracked.</small></span>
+        <span class="mode-status ${visionReady ? 'ready' : (s && !vision.opencv ? 'missing' : 'pending')}"><i aria-hidden="true"></i>${esc(visionHint)}</span>
+        <span class="knob"></span>
+      </label>
+    </div>
     <div class="opt-group"><span class="fl">Number of clips</span>
       <div class="stepper"><button type="button" class="icon sm" data-step="clips" data-d="-1" aria-label="Fewer clips">${ico('minus')}</button>
         <input type="number" min="1" max="20" data-opt="clips" value="${o.clips || 5}" aria-label="Number of clips"><button type="button" class="icon sm" data-step="clips" data-d="1" aria-label="More clips">${ico('plus')}</button></div></div>
@@ -350,23 +388,6 @@ function readStyleRoot(root) {
   return o;
 }
 
-/* "Your plan": a plain-language summary of the current compact settings. */
-function paintPlan() {
-  const box = document.getElementById('planBox'); if (!box || !document.getElementById('optbox')) return;
-  const o = readOpts(document.getElementById('optbox'));
-  const preset = document.querySelector('#styleCard .stylePreset')?.value || state.opts?.caption_style?.preset || 'bold-pop';
-  const label = STYLES.presets?.[preset]?.label || preset;
-  const fmt = { shorts: 'YouTube Shorts · 9:16', reels: 'Facebook Reels · 9:16', both: 'Shorts + Reels' }[o.platform] || 'YouTube Shorts · 9:16';
-  const frame = o.layout === 'blur_fit' ? 'Blur fit' : 'Center crop';
-  const rows = [
-    ['Clips', `${o.clips || 1} × about ${o.duration || 45} s`],
-    ['Format', fmt],
-    ['Framing', frame + (o.zoom ? ' · slow zoom' : '')],
-    ['Captions', o.captions ? label : 'Off'],
-    ['Scoring', o.use_llm ? 'AI, with a heuristic fallback' : 'Heuristics only'],
-  ];
-  box.innerHTML = `<span class="label">Your plan</span><dl>${rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>`;
-}
 function readOpts(root) {
   const o = { caption_style: readStyleRoot(root) };
   if (!root) return o;
@@ -459,21 +480,28 @@ function prevWords(p) {
     ? `<span class="w solo" data-words="${SAMPLES[sampleLang].join(',')}" data-hl="${p.highlight_color}" data-pill="${p.highlight_mode === 'pill' ? p.pill_color : ''}" data-pt="${p.pill_text}" data-sc="115" style="color:${p.highlight_color}">${SAMPLES[sampleLang][0]}</span>`
     : wordSpans(p, sampleLang);
 }
+function sampleCardPreview(p) {
+  const cls = `${p.box ? 'has-box' : ''} ${p.highlight_mode === 'pill' ? 'is-pill' : ''}`.trim();
+  const display = p.display === 'word' ? 'word-sample' : 'line-sample';
+  return `<div class="cap card-preview" aria-hidden="true">
+    <span class="sample-kicker"><i></i> PODCAST CUT</span><span class="sample-time">00:18</span>
+    <span class="sample-caption ${display} ${cls}" dir="${sampleLang === 'ar' ? 'rtl' : 'ltr'}" style="color:${p.text_color};${prevStyle(p)}">${prevWords(p)}</span>
+    <span class="sample-progress"><i></i></span>
+  </div>`;
+}
 function cardHTML(key, p0, base, sel) {
   const p = { ...base, ...p0 };
-  const cls = `${p.box ? 'has-box' : ''} ${p.highlight_mode === 'pill' ? 'is-pill' : ''}`.trim();
-  return `<div class="scard preset-card ${key === sel ? 'sel active' : ''}" data-k="${key}" title="${esc(p0.label || key)}">
-    <div class="cap card-preview ${cls}" style="color:${p.text_color};${prevStyle(p)}">${prevWords(p)}</div>
-    <div class="card-label">${esc(p0.label || key)}</div></div>`;
+  const active = key === sel;
+  return `<div class="scard preset-card ${active ? 'sel active' : ''}" data-k="${key}" role="button" tabindex="0" aria-pressed="${active}" title="${esc(p0.label || key)}">
+    ${sampleCardPreview(p)}<div class="card-label">${esc(p0.label || key)}</div></div>`;
 }
 function tplCardHTML(t, i, sel) {
   const p0 = STYLES.presets[t.preset] || {};
   const p = { ...STYLES.base, ...p0, ...(t.overrides || {}) };
-  const cls = `${p.box ? 'has-box' : ''} ${p.highlight_mode === 'pill' ? 'is-pill' : ''}`.trim();
-  return `<div class="scard preset-card ${t.preset === sel ? 'sel active' : ''}" data-tpl="${i}" data-k="${esc(t.preset || 'bold-pop')}" title="${esc(t.name)}">
-    <button class="tplx" data-tpldel="${i}" title="Delete template">×</button>
-    <div class="cap card-preview ${cls}" style="color:${p.text_color};${prevStyle(p)}">${prevWords(p)}</div>
-    <div class="card-label">${esc(t.name)}</div></div>`;
+  const active = t.preset === sel;
+  return `<div class="scard preset-card ${active ? 'sel active' : ''}" data-tpl="${i}" data-k="${esc(t.preset || 'bold-pop')}" role="button" tabindex="0" aria-pressed="${active}" title="${esc(t.name)}">
+    <button class="tplx" data-tpldel="${i}" title="Delete template" aria-label="Delete ${esc(t.name)}">×</button>
+    ${sampleCardPreview(p)}<div class="card-label">${esc(t.name)}</div></div>`;
 }
 const TPL_KEY = 'marrow_templates';
 const getTpls = () => { try { return JSON.parse(localStorage.getItem(TPL_KEY)) || []; } catch (_) { return []; } };
@@ -620,10 +648,11 @@ function updateHomePreview() {
     const isBlurFit = (o.layout === 'blur_fit');
     phone.classList.toggle('layout-blur_fit', isBlurFit);
     phone.classList.toggle('layout-crop', !isBlurFit);
+    phone.classList.toggle('split-enabled', o.split_screen !== false);
     phone.classList.toggle('has-zoom', !!o.zoom && !isBlurFit);
 
     const frameBadge = document.getElementById('prevFrameBadge');
-    if (frameBadge) frameBadge.textContent = isBlurFit ? 'Blur Fit' : 'Crop';
+    if (frameBadge) frameBadge.textContent = o.split_screen !== false ? 'Auto split' : (isBlurFit ? 'Blur Fit' : 'Crop');
     
     const styleBadge = document.getElementById('prevStyleBadge');
     if (styleBadge) styleBadge.textContent = st.label || st.presetKey || 'Style';
@@ -638,6 +667,7 @@ function updateHomePreview() {
     const isBlurFit = (o.layout === 'blur_fit');
     modalPhone.classList.toggle('layout-blur_fit', isBlurFit);
     modalPhone.classList.toggle('layout-crop', !isBlurFit);
+    modalPhone.classList.toggle('split-enabled', o.split_screen !== false);
     modalPhone.classList.toggle('has-zoom', !!o.zoom && !isBlurFit);
 
 
@@ -936,7 +966,42 @@ function openPreviewModal() {
   }
 }
 
+function isOneWordStyle(key, preset) {
+  return preset?.display === 'word' || Number(preset?.max_words_per_line) === 1 || /^one-word(?:-|$)/.test(key);
+}
+function paintHomeStyles(picker) {
+  const sel = $('.stylePreset', picker)?.value || 'bold-pop';
+  const entries = Object.entries(STYLES.presets || {});
+  const current = STYLES.presets?.[sel] || FALLBACK_PRESETS[sel] || {};
+  const selectedLabel = $('[data-home-selected-style]', picker);
+  if (selectedLabel) selectedLabel.textContent = current.label || sel;
+  const counts = { word: 0, line: 0 };
+  entries.forEach(([key, preset]) => { counts[isOneWordStyle(key, preset) ? 'word' : 'line'] += 1; });
+  Object.entries(counts).forEach(([category, count]) => {
+    const badge = $(`[data-format-count="${category}"]`, picker);
+    if (badge) badge.textContent = `${String(count).padStart(2, '0')} ${count === 1 ? 'STYLE' : 'STYLES'}`;
+  });
+  const savedCount = $('[data-saved-count]', picker);
+  if (savedCount) savedCount.textContent = getTpls().length ? `${getTpls().length} saved` : 'Save and reuse a look';
+
+  $$('.home-style-grid', picker).forEach(grid => {
+    const category = grid.dataset.styleCategory;
+    if (category === 'my') {
+      const templates = getTpls();
+      grid.innerHTML = `<div class="scard preset-card tpladd" data-tpladd="1" role="button" tabindex="0" title="Save the current style as a template"><div class="card-preview tpladd-preview"><span>＋</span></div><div class="card-label">Save current</div></div>`
+        + (templates.length ? templates.map((t, i) => tplCardHTML(t, i, sel)).join('')
+          : `<p class="home-template-empty">No saved looks yet. Save the selected style here for reuse.</p>`);
+      return;
+    }
+    const styles = entries.filter(([key, preset]) => (category === 'word') === isOneWordStyle(key, preset));
+    grid.innerHTML = styles.length
+      ? styles.map(([key, preset]) => cardHTML(key, preset, STYLES.base, sel)).join('')
+      : `<p class="home-template-empty">${category === 'word' ? 'One-word styles will appear here.' : 'More caption styles will appear here.'}</p>`;
+  });
+}
 function paintStyles(root) {
+  const picker = root?.matches?.('.home-style-picker') ? root : $('.home-style-picker', root);
+  if (picker) { paintHomeStyles(picker); return; }
   const grid = $('.styleGrid', root); if (!grid) return;
   const tab = (root.dataset && root.dataset.styleTab) || 'quick';
   const sel = $('.stylePreset', root)?.value || 'bold-pop';
@@ -1013,10 +1078,12 @@ setInterval(() => {
   } catch (_) { /* fallback presets already rendered */ }
 })();
 function repaintStyles() {
-  document.querySelectorAll('.styleGrid').forEach(g => {
-    const scope = g.closest('.optbody,.modal') || document;
-    paintStyles(scope);
+  const scopes = new Set();
+  document.querySelectorAll('.styleGrid').forEach(grid => {
+    const scope = grid.closest('.home-style-picker,.optbody,.modal,.edside') || document;
+    scopes.add(scope);
   });
+  scopes.forEach(paintStyles);
 }
 document.addEventListener('click', e => {
   const stp = e.target.closest('[data-step]');
@@ -1067,7 +1134,7 @@ document.addEventListener('click', e => {
     const scope = card.closest('.optbody,.modal,#styleCard,.edside') || document;
     const hid = $('.stylePreset', scope); if (hid) hid.value = card.dataset.k;
     const t = (card.dataset.tpl !== undefined && card.dataset.tpl !== '') ? getTpls()[+card.dataset.tpl] : null;
-    paintStyles(scope); previewReal(scope); paintPlan();
+    paintStyles(scope); previewReal(scope);
     scope.querySelectorAll('.custwrap').forEach(c => {
       c.innerHTML = customizeHTML(t ? (t.overrides || {}) : {}, card.dataset.k);
     });
@@ -1084,16 +1151,21 @@ document.addEventListener('click', e => {
     return;
   }
 });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const card = e.target.closest?.('.styleGrid .scard[role="button"]');
+  if (!card || e.target.closest('[data-tpldel]')) return;
+  e.preventDefault();
+  card.click();
+});
 document.addEventListener('change', e => {
   if (e.target.closest?.('#plist .project-checkbox')) updateSelection();
   if (e.target.dataset?.ov || e.target.dataset?.opt || e.target.closest?.('.custwrap,#optbox,#styleCard')) {
     updateHomePreview();
-    if (e.target.closest?.('#optbox')) paintPlan();
   }
 });
 document.addEventListener('input', e => {
   const el = e.target;
-  if (el.closest?.('#optbox')) paintPlan();
   if (el.type === 'range' && el.dataset.ov) {
     delete el.dataset.auto;                       // the user touched it: this value is now an override
     const out = el.parentElement.querySelector('output'); if (out) out.textContent = el.value + (el.dataset.unit || '');
@@ -1177,62 +1249,65 @@ const Home = { probeId: null, timer: null, probeReady: false, probeFailed: false
 const FOUND_KEY = 'marrowFound';   // the fetched link + probe id, kept for the tab so a reload or a page switch doesn't refetch
 const LINK_RE = /^https?:\/\/[^\s/]+\.[^\s]+/i;
 function viewHome() {
-  if (!state.opts) state.opts = state.settings ? state.settings.job_defaults : { clips: 5, duration: 45, platform: 'shorts', layout: 'crop', captions: true, use_llm: true, zoom: false, caption_style: { preset: 'bold-pop', overrides: {} } };
+  if (!state.opts) state.opts = state.settings ? state.settings.job_defaults : { clips: 5, duration: 45, platform: 'shorts', layout: 'crop', split_screen: true, captions: true, use_llm: true, zoom: false, caption_style: { preset: 'bold-pop', overrides: {} } };
   const s = state.system;
   main.innerHTML = `
   ${s && !s.ffmpeg ? `<div class="banner bad">${ico('alert')}<div>FFmpeg wasn’t found, so clips can’t be rendered. Install it (Windows: <code>winget install ffmpeg</code>), open a new terminal and restart Marrow.</div></div>` : ''}
-  <header class="page-head">
-    <div>
-      <div class="eyebrow">Local AI video clipping</div>
-      <h1 class="page-title">One long video. Many viral clips.</h1>
-      <p class="page-sub">Paste a link or drop a file. Marrow finds the strongest moments and renders captioned Shorts and Reels, all on your machine.</p>
+  <header class="page-head home-head">
+    <div class="home-intro">
+      <div class="eyebrow"><span class="home-eyebrow-dot"></span>Marrow Studio <span class="home-eyebrow-sep">/</span> Local video workflow</div>
+      <h1 class="page-title">Your next short starts here.</h1>
+      <p class="page-sub">Choose a source, shape the frame, and make every caption feel considered. Your videos stay on your machine.</p>
     </div>
-    <ol class="steps" aria-label="How Marrow works"><li><b>1</b>Find</li><li><b>2</b>Transcribe</li><li><b>3</b>Score</li><li><b>4</b>Render</li></ol>
+    <nav class="home-journey" aria-label="Creation steps">
+      <div class="home-journey-step"><span>01</span><b>Source</b></div><i aria-hidden="true"></i>
+      <div class="home-journey-step"><span>02</span><b>Output</b></div><i aria-hidden="true"></i>
+      <div class="home-journey-step"><span>03</span><b>Captions</b></div>
+    </nav>
   </header>
   <div class="home">
-    <div class="home-main">
-      <section class="card" id="sourceCard">
-        <div class="source-grid">
-          <div class="source-col">
-            <label class="label" for="url">Paste a link</label>
-            <div class="urlrow">
-              <input type="text" id="url" placeholder="https://youtube.com/watch?v=…" value="${esc(state.url)}" autocomplete="off" spellcheck="false">
-              <button class="btn primary" id="findBtn">Find video</button>
-            </div>
-            <p class="hint">YouTube, Vimeo, X and most sites that yt-dlp supports.</p>
+    <section class="card home-source-card" id="sourceCard">
+      <div class="card-head home-card-head"><div><span class="home-step-label">01 / SOURCE</span><h3>Bring in a video</h3><p class="hint">Use a link or upload a file to get started.</p></div><span class="home-card-aside">LINK OR FILE</span></div>
+      <div class="source-grid">
+        <div class="source-col">
+          <label class="label" for="url">Paste a link</label>
+          <div class="urlrow">
+            <input type="text" id="url" placeholder="https://youtube.com/watch?v=…" value="${esc(state.url)}" autocomplete="off" spellcheck="false">
+            <button class="btn primary" id="findBtn">Find video</button>
           </div>
-          <div class="source-col">
-            <span class="label">Or upload a file</span>
-            <div class="dropzone" id="dropbox"><div id="uprow"></div></div>
-            <div class="upbar" id="upbar" hidden><i></i></div>
-          </div>
+          <p class="hint">YouTube, Vimeo, X and most sites that yt-dlp supports.</p>
         </div>
-        <div id="foundWrap"></div>
-      </section>
-      <section class="card" id="styleCard">
-        <div class="card-head"><div><h3>Caption style</h3><p class="hint">Pick a look. Previews use your real frames once a video is found.</p></div></div>
-        ${styleSectionHTML(state.opts?.caption_style?.preset || 'bold-pop')}
-        <details class="cust"><summary>Customize style</summary><div id="homeCustomize" class="custwrap"></div></details>
-      </section>
-      <div class="sechead"><h2>Recent projects</h2>${state.projects.length ? '<a class="btn ghost sm" href="#/projects">View all</a>' : ''}</div>
-      <div id="recent"></div>
-    </div>
+        <div class="source-col">
+          <span class="label">Upload a file</span>
+          <div class="dropzone" id="dropbox"><div id="uprow"></div></div>
+          <div class="upbar" id="upbar" hidden><i></i></div>
+        </div>
+      </div>
+      <div id="foundWrap"></div>
+    </section>
     <aside class="card home-side" aria-label="Clip settings">
-      <div class="card-head"><h3>Clip settings</h3></div>
+      <div class="card-head home-card-head"><div><span class="home-step-label">02 / OUTPUT</span><h3>Clip settings</h3><p class="hint">Shape each short for its destination.</p></div></div>
       <div id="optbox">${optsPanel(state.opts, true)}</div>
-      <div class="plan" id="planBox"></div>
       <div class="cta">
         <button class="btn primary lg block" id="genBtn" disabled>Generate clips</button>
         <p class="hint" id="genNote"></p>
       </div>
     </aside>
+    <section class="card home-caption-card" id="styleCard">
+      <div class="card-head home-card-head"><div><span class="home-step-label">03 / CAPTION DESIGN</span><h3>Choose a caption style</h3><p class="hint">Browse by reading format, then preview it on your video.</p></div><span class="home-card-aside">ONE WORD · LINE CAPTIONS</span></div>
+      ${styleSectionHTML(state.opts?.caption_style?.preset || 'bold-pop')}
+      <details class="cust"><summary>Fine-tune this style</summary><div id="homeCustomize" class="custwrap"></div></details>
+    </section>
+    <section class="home-recent" aria-labelledby="recentHeading">
+      <div class="sechead"><div><span class="home-step-label">YOUR LIBRARY</span><h2 id="recentHeading">Recent projects</h2></div>${state.projects.length ? '<a class="btn ghost sm" href="#/projects">View all projects</a>' : ''}</div>
+      <div id="recent"></div>
+    </section>
   </div>`;
   paintUploadRow(); paintRecent();
   $('#homeCustomize').innerHTML = customizeHTML(state.opts?.caption_style?.overrides, state.opts?.caption_style?.preset);
   $$('details.cust').forEach(d => { d.open = custOpen; });
   mountStyles($('#styleCard'), state.opts?.caption_style?.preset || 'bold-pop');
   setGenBtn();
-  paintPlan();
   setupHomePreviewEvents();
   updateHomePreview();
   $('#findBtn').onclick = () => findVideo(($('#url')?.value || '').trim());
@@ -1419,7 +1494,7 @@ function clearPending() {
 }
 function paintRecent() {
   const r = $('#recent'); if (!r) return;
-  const list = state.projects.slice(0, 6);
+  const list = state.projects.slice(0, 3);
   const sig = projSig(list); if (r.dataset.sig === sig) return; r.dataset.sig = sig;
   r.innerHTML = list.length ? `<div class="pgrid compact">${list.map(p => projectCard(p, false)).join('')}</div>`
     : `<div class="empty">${ico('film')}<div><b>No projects yet</b><span class="hint">Paste a link above or drop a video to make your first clips.</span></div></div>`;
@@ -2637,7 +2712,6 @@ function viewSettings() {
         <div class="card-head"><h3>Appearance &amp; alerts</h3></div>
         <div class="form">
           <div class="field"><span class="fl">Theme</span><div class="seg" id="themeSeg"><button type="button" data-t="dark">Dark</button><button type="button" data-t="light">Light</button><button type="button" data-t="system">System</button></div></div>
-          <div class="field"><span class="fl">Accent</span><div class="seg grid2" id="accentSeg"><button type="button" data-a="violet">Violet</button><button type="button" data-a="graphite">Graphite</button><button type="button" data-a="blue">Blue</button><button type="button" data-a="green">Green</button><button type="button" data-a="orange">Orange</button></div></div>
           <div class="field"><span class="fl">Caption pace</span><div class="seg tight" id="paceSeg"><button type="button" data-p="0.28">Relaxed</button><button type="button" data-p="0.22">Normal</button><button type="button" data-p="0.16">Snappy</button></div></div>
           <div class="field">
             <span class="fl">Alerts</span>
@@ -2650,12 +2724,8 @@ function viewSettings() {
   paintSysCheck();
   const curT = document.documentElement.dataset.themeChoice || 'system';
   $$('#themeSeg button').forEach(x => x.classList.toggle('on', x.dataset.t === curT));
-  const curA = document.documentElement.dataset.accent || 'graphite';
-  $$('#accentSeg button').forEach(x => x.classList.toggle('on', x.dataset.a === curA));
   $('#themeSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return;
     $$('#themeSeg button').forEach(x => x.classList.toggle('on', x === b)); setTheme(b.dataset.t); };
-  $('#accentSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return;
-    $$('#accentSeg button').forEach(x => x.classList.toggle('on', x === b)); setAccent(b.dataset.a); };
   const st = $('#soundTog'); if (st) { st.checked = soundOn(); st.onchange = () => { try { localStorage.setItem('soundFinish', st.checked ? 'on' : 'off'); } catch (_) {} }; }
   const pace = String(s.captions.min_gap ?? '0.22');
   $$('#paceSeg button').forEach(x => x.classList.toggle('on', x.dataset.p === pace || (+x.dataset.p === +pace)));
@@ -2667,11 +2737,12 @@ function paintSysCheck() {
   if (!s) { box.textContent = 'Checking…'; return; }
   const row = (cls, t, d) => `<div class="chk"><span class="dot ${cls}"></span><span><span class="t">${t}</span> <span class="d">${d}</span></span></div>`;
   // YouTube setup: the four checks that decide whether a "not a bot" error can be fixed here.
-  const yt = s.ytdlp || {}, ck = s.cookies || {};
+  const yt = s.ytdlp || {}, ck = s.cookies || {}, vision = s.vision || {};
   const ytRow = yt.version
     ? row(yt.new_enough ? 'ok' : 'warn', 'yt-dlp', `${esc(yt.version)} · ${yt.new_enough ? 'new enough for YouTube' : 'too old for YouTube: run pip install -U "yt-dlp[default,deno]"'}`)
     : row('bad', 'yt-dlp', yt.error ? esc(yt.error) : 'not installed: pip install -U "yt-dlp[default,deno]"');
   box.innerHTML = row(s.ffmpeg ? 'ok' : 'bad', 'FFmpeg', s.ffmpeg ? 'found' : 'not found — install it and restart Marrow') +
+    row(vision.ready ? 'ok' : 'warn', 'Split-screen vision', !vision.opencv ? 'OpenCV missing — install with pip install opencv-python-headless' : vision.model ? 'YuNet face model ready' : 'YuNet model downloads automatically on first use') +
     ytRow +
     row(yt.js_runtime ? 'ok' : 'warn', 'JavaScript runtime', yt.js_runtime ? `${esc(yt.js_runtime)} found` : 'none. YouTube needs one: pip install deno, or install Node.js') +
     row(yt.solver ? 'ok' : 'warn', 'YouTube solver', yt.solver ? 'yt-dlp-ejs installed' : 'missing: pip install -U "yt-dlp[default]"') +
@@ -2700,7 +2771,6 @@ const actions = {
     const scope = b.closest('.optbody,.modal,#styleCard');
     if (scope && $('.styleGrid', scope)) previewReal(scope);
     if (typeof refreshLiveOverlay === 'function' && editCtx) refreshLiveOverlay();
-    if (b.closest('#optbox')) paintPlan();
     
     // If display segment in customize form was changed:
     const segContainer = b.parentElement;

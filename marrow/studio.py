@@ -36,15 +36,34 @@ def make_strip(src, workdir, step=3.0, tiles=8):
 
 
 def make_proxy(src, workdir, duration):
-    """480p seek-friendly proxy + thumbnail strip for the Live Analysis panel."""
+    """Build a 480p proxy and thumbnail strip in one source decode."""
     w = Path(workdir)
-    _render_atomic(w / "proxy.mp4",
-                   ["-i", src, "-vf", "scale=-2:480,fps=24", "-an", "-c:v", "libx264",
-                    "-preset", "ultrafast", "-crf", "30", "-g", "24", "-movflags", "+faststart"])
-    step = max(1, duration / 24)
-    _render_atomic(w / "strip.jpg",
-                   ["-i", src, "-vf", f"fps=1/{step:.3f},scale=160:-2,tile=24x1",
-                    "-frames:v", "1"])
+    w.mkdir(parents=True, exist_ok=True)
+    proxy, strip = w / "proxy.mp4", w / "strip.jpg"
+    tmp_proxy, tmp_strip = part_path(proxy), part_path(strip)
+    step = max(1.0, float(duration or 24) / 24.0)
+    graph = (
+        "[0:v]split=2[proxy_in][strip_in];"
+        "[proxy_in]scale=-2:480,fps=24[proxy];"
+        f"[strip_in]fps=1/{step:.3f},scale=160:-2,tile=24x1[strip]"
+    )
+    args = [
+        "-i", src, "-filter_complex", graph,
+        "-map", "[proxy]", "-an", "-c:v", "libx264", "-preset", "ultrafast",
+        "-crf", "30", "-g", "24", "-movflags", "+faststart", tmp_proxy,
+        "-map", "[strip]", "-frames:v", "1", "-q:v", "3", tmp_strip,
+    ]
+    try:
+        run_ffmpeg(args)
+        if not tmp_proxy.is_file() or tmp_proxy.stat().st_size == 0:
+            raise RuntimeError("ffmpeg did not write the preview proxy")
+        if not tmp_strip.is_file() or tmp_strip.stat().st_size == 0:
+            raise RuntimeError("ffmpeg did not write the thumbnail strip")
+        os.replace(tmp_proxy, proxy)
+        os.replace(tmp_strip, strip)
+    finally:
+        tmp_proxy.unlink(missing_ok=True)
+        tmp_strip.unlink(missing_ok=True)
 
 
 def load_words(workdir):
@@ -319,7 +338,10 @@ def export_clip(cfg, media, workdir, words, rank, start, end, spec, out_path,
         if shots is None:
             from . import layout as _layout
 
-            shots = _layout.analyze(media, start, end, workdir=workdir)
+            shots = _layout.analyze(
+                media, start, end, workdir=workdir,
+                split_screen=cfg["render"].get("split_screen", True),
+                fallback=cfg["render"].get("layout", "crop"))
         shots = apply_shot_overrides(shots, overrides)
         segmented = needs_segmented_render(shots)
     else:
@@ -346,7 +368,7 @@ def export_clip(cfg, media, workdir, words, rank, start, end, spec, out_path,
         venc = ["-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq",
                 "-rc", "vbr", "-cq", str(crf), "-b:v", "0"]
     else:
-        venc = ["-c:v", "libx264", "-preset", cfg["render"].get("preset", "fast"),
+        venc = ["-c:v", "libx264", "-preset", cfg["render"].get("preset", "veryfast"),
                 "-crf", str(crf)]
     try:
         mbps = float(adv.get("video_mbps") or 0)

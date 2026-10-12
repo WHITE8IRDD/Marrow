@@ -20,8 +20,11 @@ duration = c2.slider("Target length (seconds)", 15, 120, 45)
 platform = c3.selectbox("Output format", ["shorts", "reels", "both"], index=2)
 
 with st.expander("Advanced"):
-    layout = st.radio("Layout", ["crop", "blur_fit"], horizontal=True,
-                      help="crop = center crop; blur_fit = full frame over a blurred background")
+    layout = st.radio("Fallback framing", ["crop", "blur_fit"], horizontal=True,
+                      help="Used when no subject can be tracked: crop the center or fit the full frame over blur.")
+    split_screen = st.checkbox(
+        "Split-screen multi-speaker conversations", value=True,
+        help="Stack both people vertically when a real two-shot is detected; single-person cuts stay face-tracked.")
     use_llm = st.checkbox("Use Ollama LLM scoring", value=True)
 
 if st.button("Generate clips", type="primary"):
@@ -38,7 +41,8 @@ if st.button("Generate clips", type="primary"):
         try:
             st.session_state["results"] = run_pipeline(
                 source.strip(), clip_count=num_clips, clip_duration=duration,
-                platform=platform, layout=layout, use_llm=use_llm, progress=on_progress,
+                platform=platform, layout=layout, split_screen=split_screen,
+                use_llm=use_llm, progress=on_progress,
             )
             status.write("Done")
         except Exception as e:  # show the real error instead of failing silently

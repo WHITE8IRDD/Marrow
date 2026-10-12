@@ -82,7 +82,8 @@ def _fmt_span(sec):
 
 def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_count=None,
                  clip_duration=None, platform="shorts", layout=None, use_llm=None,
-                 force=False, progress=None, config=None, on_source=None, eta_holder=None):
+                 force=False, progress=None, config=None, on_source=None, eta_holder=None,
+                 split_screen=None):
     """Run the full pipeline. Returns a list of result dicts (also saved as manifest.json)."""
 
     def emit(stage, frac, **kw):
@@ -102,6 +103,8 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
         cfg["render"]["layout"] = layout
     if use_llm is not None:
         cfg["llm"]["enabled"] = bool(use_llm)
+    if split_screen is not None:
+        cfg["render"]["split_screen"] = bool(split_screen)
 
     max_dur = min([clip["max_duration"]] + [cfg["platforms"][p]["max_duration"] for p in plats])
     min_dur = max(5, min(clip["min_duration"], max_dur - 5))
@@ -360,7 +363,10 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
     for rank, c in enumerate(chosen, 1):
         s, e = padded_bounds(c, clip["pad_start"], clip["pad_end"], duration)
         try:
-            clip_shots[rank] = _layout.analyze(render_src, s, e, workdir=src.workdir)
+            clip_shots[rank] = _layout.analyze(
+                render_src, s, e, workdir=src.workdir,
+                split_screen=cfg["render"].get("split_screen", True),
+                fallback=cfg["render"].get("layout", "crop"))
         except Exception:
             log.exception("Shot analysis failed")
             clip_shots[rank] = None
