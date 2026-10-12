@@ -1,6 +1,11 @@
+import os
+import shutil
+import threading
 from pathlib import Path
 
 FONTS_DIR = Path(__file__).parent / "assets" / "fonts"
+
+_fonts_lock = threading.Lock()
 
 BASE = dict(
     font="Arial", font_ar="Arial", size=72, bold=True, italic=False, uppercase=True,
@@ -76,8 +81,48 @@ def resolve_style(preset=None, overrides=None, legacy=None):
     return st
 
 
+def _same_file(src, dst):
+    """True when dst already holds an identical copy of src (size + mtime)."""
+    try:
+        ss, ds = src.stat(), dst.stat()
+    except OSError:
+        return False
+    return ss.st_size == ds.st_size and ss.st_mtime_ns == ds.st_mtime_ns
+
+
+def _copy_atomic(src, dst):
+    """Copy src over dst without ever leaving a partial file for readers.
+
+    A concurrent ffmpeg render may be reading these fonts at the same time;
+    writing to a temp file + os.replace keeps the visible file whole, and the
+    per-thread temp name avoids collisions between staging threads."""
+    tmp = dst.with_name(f"{dst.name}.{os.getpid()}.{threading.get_ident()}.part")
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
 def ensure_fonts(dest_dir):
-    """Copy bundled fonts next to the .ass file so ffmpeg can use a RELATIVE fontsdir (no C: colon)."""
-    import shutil
-    if FONTS_DIR.is_dir():
-        shutil.copytree(FONTS_DIR, Path(dest_dir) / "fonts", dirs_exist_ok=True)
+    """Copy bundled fonts next to the .ass file so ffmpeg can use a RELATIVE fontsdir (no C: colon).
+
+    Idempotent and safe under concurrent renders: staging is serialized, files
+    already present and identical are skipped (never reopened for writing, so
+    neither sibling threads nor a running ffmpeg hit Windows WinError 32
+    sharing violations), and replacements are atomic."""
+    if not FONTS_DIR.is_dir():
+        return
+    dest = Path(dest_dir) / "fonts"
+    with _fonts_lock:
+        dest.mkdir(parents=True, exist_ok=True)
+        for src in sorted(FONTS_DIR.iterdir()):
+            if not src.is_file():
+                continue
+            dst = dest / src.name
+            if _same_file(src, dst):
+                continue
+            _copy_atomic(src, dst)
