@@ -94,11 +94,11 @@ def _ov_int(v, lo, hi):
 _OV_INT_RANGES = {"font_size": (30, 140), "size": (30, 140), "outline": (0, 20),
                   "shadow": (0, 10), "blur": (0, 5), "box_opacity": (0, 100),
                   "pill_pad": (0, 30), "active_scale": (80, 200), "emphasis_scale": (80, 250),
-                  "max_words_per_line": (1, 10)}
+                  "max_words_per_line": (1, 10), "fade_in": (0, 600), "fade_out": (0, 600)}
 _OV_COLORS = {"highlight_color", "text_color", "outline_color", "pill_color", "pill_text", "box_color"}
 _OV_CHOICE = {"position": ("lower", "center", "top"), "anim": ("pop", "none"),
               "highlight_mode": ("color", "pill"), "display": ("line", "word")}
-_OV_BOOL = {"uppercase", "bold", "italic", "box", "strip_punct"}
+_OV_BOOL = {"uppercase", "bold", "italic", "box", "strip_punct", "hold_highlight", "smooth"}
 
 
 def _font_allow():
@@ -791,7 +791,13 @@ class App:
                 raise RuntimeError("Source video is missing on disk.")
             from . import layout as _layout
 
-            shots = _layout.analyze(media, start, end, workdir=workdir)
+            fr = c.get("framing") or "auto"
+            if fr in ("crop", "blur_fit"):
+                shots = _layout.analyze(media, start, end, prefer=fr, workdir=workdir)
+            else:
+                shots = _layout.analyze(media, start, end, workdir=workdir)
+                if fr in ("stacked", "face"):
+                    shots = studio.apply_shot_overrides(shots, {str(i): fr for i in range(len(shots))})
             shots = studio.apply_shot_overrides(shots, c.get("shot_layouts"))
             produced = studio.render_clip_files(cfg, media, workdir, words, rank, start, end,
                                                 list(files), out_dir, captions, shots)
@@ -1122,6 +1128,12 @@ class App:
                 _gc.collect()
                 with self.lock:
                     self.model_dl["done"].append(m)
+            hw.set_stage("Downloading face-detection model")
+            from . import layout as _layout
+
+            if _layout.MODEL_PATH.exists() or _layout.download_model():
+                with self.lock:
+                    self.model_dl["done"].append("face-detection")
         except Exception as e:
             log.exception("Model download failed")
             with self.lock:
@@ -1290,9 +1302,19 @@ class Handler(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
         return host in LOOPBACK_HOSTS
 
-    def send_file(self, path, download_name=None, delete_after=False, ctype=None):
-        size = path.stat().st_size
+    def send_file(self, path, download_name=None, delete_after=False, ctype=None, cache=None):
+        st = path.stat()
+        size = st.st_size
         ctype = ctype or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        cache = cache or "no-cache"
+        etag = f'W/"{int(st.st_mtime)}-{size}"'
+        inm = self.headers.get("If-None-Match")
+        if inm and inm == etag and not download_name and not delete_after:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", cache)
+            self.end_headers()
+            return
         start, end, status = 0, size - 1, 200
         rng = self.headers.get("Range")
         if rng:
@@ -1316,7 +1338,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(length))
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", cache)
+        self.send_header("ETag", etag)
         if status == 206:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         if download_name:
@@ -1751,7 +1774,9 @@ def r_media(h, q, vid, fname):
     if h.app.out not in path.parents or not path.is_file():
         raise ApiError("File not found", 404)
     dl = fname if (q.get("download") or ["0"])[0] == "1" else None
-    h.send_file(path, download_name=dl)
+    # ?v=<rev> bumps on every re-render, so versioned files can be cached forever
+    cache = "public, max-age=31536000, immutable" if q.get("v") else None
+    h.send_file(path, download_name=dl, cache=cache)
 
 
 @route("GET", r"/source/([\w.\-]+)")
@@ -1780,7 +1805,9 @@ def r_static(h, q, fname):
     path = (WEB_DIR / fname).resolve()
     if not ctype or WEB_DIR.resolve() not in path.parents or not path.is_file():
         raise ApiError("File not found", 404)
-    h.send_file(path, ctype=ctype)
+    # index.html is no-store and carries ?v=, so versioned assets are immutable
+    cache = "public, max-age=31536000, immutable" if q.get("v") else None
+    h.send_file(path, ctype=ctype, cache=cache)
 
 
 def main(argv=None):
