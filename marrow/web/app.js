@@ -1184,7 +1184,7 @@ function viewHome() {
   <header class="page-head">
     <div>
       <div class="eyebrow">Local AI video clipping</div>
-      <h1 class="page-title">One long video. Many viral clips.</h1>
+      <h1 class="page-title">One long video. <span class="grad">Many viral clips.</span></h1>
       <p class="page-sub">Paste a link or drop a file. Marrow finds the strongest moments and renders captioned Shorts and Reels, all on your machine.</p>
     </div>
     <ol class="steps" aria-label="How Marrow works"><li><b>1</b>Find</li><li><b>2</b>Transcribe</li><li><b>3</b>Score</li><li><b>4</b>Render</li></ol>
