@@ -31,6 +31,9 @@ def test_app_assets_are_served_with_module_safe_types(base):
         assert b"function openPreviewModal" in content
         assert b"homePrevBg" in content
         assert b"prev-controls" in content
+        assert b'data-opt="split_screen"' in content
+        assert b"paintPlan(" not in content
+        assert b"accentSeg" not in content
     with urllib.request.urlopen(base + "/static/app.css") as r:
         assert r.headers["Content-Type"].startswith("text/css")
         css_content = r.read()
@@ -38,6 +41,31 @@ def test_app_assets_are_served_with_module_safe_types(base):
         assert b".layout-blur_fit" in css_content
         assert b".prev-modal-wrap" in css_content
         assert b"prevSlowZoom" in css_content
+
+
+def test_home_caption_library_separates_reading_formats_and_uses_refined_surfaces(base):
+    with urllib.request.urlopen(base + "/static/app.js") as r:
+        js = r.read()
+    assert b"One-word captions" in js
+    assert b"Multi-word &amp; line captions" in js
+    assert b'data-style-category="word"' in js
+    assert b'data-style-category="line"' in js
+    assert b"function paintHomeStyles" in js
+    assert b"home-style-preview" in js
+
+    with urllib.request.urlopen(base + "/static/app.css") as r:
+        css = r.read()
+    assert b".home-style-layout" in css
+    assert b".home-style-grid" in css
+    assert b"linear-gradient(145deg, #efefee 0%, #e9e9e8 60%, #dededd 100%)" in css
+
+
+def test_split_screen_job_option_is_defaulted_and_propagated():
+    enabled = S.clean_job_settings({})
+    disabled = S.clean_job_settings({"split_screen": False})
+    assert enabled["split_screen"] is True
+    assert disabled["split_screen"] is False
+    assert S.job_overrides(disabled)["render"]["split_screen"] is False
 
 
 def test_caption_styles_api(base):

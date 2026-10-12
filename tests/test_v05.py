@@ -11,7 +11,7 @@ from marrow.caption_styles import BASE, PRESETS, resolve_style
 from marrow.captioner import generate_ass
 from marrow.models import Word
 
-cv2 = pytest.importorskip("cv2", reason="vision extra not installed")
+cv2 = pytest.importorskip("cv2", reason="OpenCV is not installed")
 import numpy as np
 
 

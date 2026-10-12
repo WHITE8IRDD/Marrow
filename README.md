@@ -38,13 +38,14 @@ and Settings pages.
 
 ## Smart layout
 
-Clips with two people on camera render **stacked** (top/bottom panels with captions
-on the seam); single speakers get a **face-tracked crop**; slides and screen
-recordings use **blur fit**. Fully automatic per shot — override per shot in the
-Edits inspector or Framing control. Face detection is optional:
-`pip install -e ".[vision]"` (OpenCV YuNet; the ~230 KB model downloads itself on
-first use, or via Settings → Download models now). Without it, Marrow uses the
-configured crop/blur fit and logs one warning.
+When split-screen is enabled, verified two-shots with two persistent faces visible
+at the same time render as **stacked** top/bottom panels, with captions on the seam.
+Shot/reverse-shot edits are not mistaken for a two-shot. Single speakers get a
+**face-tracked crop**; slides and screen recordings use **blur fit**. Layouts are
+chosen per shot and can be overridden in the Edits inspector. OpenCV is installed
+with Marrow; the small YuNet face model downloads itself on first use (or via
+Settings → Download models now). If face detection is unavailable, Marrow falls
+back to the configured crop/blur fit and logs one warning.
 
 **Active-speaker focus.** In stacked shots Marrow watches each face's mouth motion
 (gated by the audio energy) to work out who is talking, and gently pushes in on the
@@ -72,6 +73,7 @@ different clip count or style is fast. Use `--force` to start over.
 | Better picks | Bigger Whisper model, a stronger Ollama model, `llm.max_candidates: 40` |
 | Faster | `whisper.model: base`, `llm.model: llama3.2:3b`, `render.encoder: h264_nvenc` |
 | Slides or screen recordings | `render.layout: blur_fit` |
+| Podcast two-shot panels | Home’s “Stack both speakers” toggle, or `render.split_screen: false` to disable |
 | Captions hidden by app UI | Raise `platforms.<name>.caption_margin_v` |
 | Less shouty captions | `captions.uppercase: false` |
 | Karaoke-style captions | `captions.preset: karaoke` (spoken words stay highlighted) |

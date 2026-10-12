@@ -38,19 +38,23 @@ def test_live_clip_urls_use_file_names_only(tmp_path):
     assert "//" not in clip["urls"]["shorts"][len("/media/"):]
 
 
-def test_proxy_is_written_to_a_part_file_then_renamed(tmp_path, monkeypatch):
+def test_proxy_and_strip_share_one_ffmpeg_decode_and_commit_atomically(tmp_path, monkeypatch):
     calls = []
 
     def fake_ffmpeg(args, cwd=None):
-        out = Path(args[-1])
-        calls.append(out.name)
-        if out.name.startswith("proxy"):  # while the proxy encodes, its final name must not exist
-            assert not (tmp_path / "proxy.mp4").exists(), "proxy must not appear before encoding ends"
-        out.write_bytes(b"encoded")
+        calls.append(args)
+        assert not (tmp_path / "proxy.mp4").exists()
+        assert not (tmp_path / "strip.jpg").exists()
+        assert "-filter_complex" in args
+        assert "[0:v]split=2" in args[args.index("-filter_complex") + 1]
+        proxy_out = Path(args[args.index("-movflags") + 2])
+        strip_out = Path(args[-1])
+        for out in (proxy_out, strip_out):
+            out.write_bytes(b"encoded")
 
     monkeypatch.setattr(studio, "run_ffmpeg", fake_ffmpeg)
     studio.make_proxy("source.mp4", tmp_path, 120.0)
-    assert calls == ["proxy.part.mp4", "strip.part.jpg"]
+    assert len(calls) == 1
     assert (tmp_path / "proxy.mp4").read_bytes() == b"encoded"
     assert (tmp_path / "strip.jpg").exists()
     assert not list(tmp_path.glob("*.part.*"))
@@ -58,13 +62,17 @@ def test_proxy_is_written_to_a_part_file_then_renamed(tmp_path, monkeypatch):
 
 def test_failed_proxy_leaves_no_visible_file(tmp_path, monkeypatch):
     def boom(args, cwd=None):
-        Path(args[-1]).write_bytes(b"half")
+        proxy_out = Path(args[args.index("-movflags") + 2])
+        strip_out = Path(args[-1])
+        for out in (proxy_out, strip_out):
+            out.write_bytes(b"half")
         raise RuntimeError("ffmpeg died")
 
     monkeypatch.setattr(studio, "run_ffmpeg", boom)
     with pytest.raises(RuntimeError):
         studio.make_proxy("source.mp4", tmp_path, 60.0)
     assert not (tmp_path / "proxy.mp4").exists()
+    assert not (tmp_path / "strip.jpg").exists()
     assert not list(tmp_path.glob("*.part.*"))
 
 

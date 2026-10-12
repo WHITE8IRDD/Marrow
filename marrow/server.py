@@ -4,6 +4,7 @@ a single background worker, and a static single-page app in marrow/web/index.htm
 Run:  marrow-ui   or   python -m marrow.server
 """
 import argparse
+import importlib.util
 import json
 import logging
 import mimetypes
@@ -168,6 +169,7 @@ def clean_job_settings(raw):
         "duration": _int(raw.get("duration"), 15, 170, 45),
         "platform": raw.get("platform") if raw.get("platform") in ("shorts", "reels", "both") else "shorts",
         "layout": raw.get("layout") if raw.get("layout") in ("crop", "blur_fit") else "crop",
+        "split_screen": bool(raw.get("split_screen", True)),
         "captions": bool(raw.get("captions", True)),
         "use_llm": bool(raw.get("use_llm", True)),
         "zoom": bool(raw.get("zoom", False)),
@@ -181,6 +183,7 @@ def clean_job_settings(raw):
 def job_overrides(s):
     return {
         "captions": {"enabled": s["captions"], **s["caption_style"]},
+        "render": {"split_screen": s.get("split_screen", True)},
         "zoom": {"enabled": s["zoom"]},
     }
 
@@ -586,7 +589,10 @@ class App:
         plats = list(c.get("files") or [p["settings"]["platform"]])
         from . import layout as _layout
 
-        clip_shots = _layout.analyze(media, c["start"], c["end"], workdir=self.work / p["video_id"])
+        clip_shots = _layout.analyze(
+            media, c["start"], c["end"], workdir=self.work / p["video_id"],
+            split_screen=cfg["render"].get("split_screen", True),
+            fallback=cfg["render"].get("layout", "crop"))
         clip_shots = studio.apply_shot_overrides(clip_shots, c.get("shot_layouts"))
         image = studio.render_caption_preview(cfg, media, self.work / p["video_id"], words,
                                               t, style, plats[0], p["settings"]["layout"],
@@ -698,7 +704,8 @@ class App:
             results = run_pipeline(
                 source, output_dir=str(self.out), config=cfg, clip_count=settings["clips"],
                 clip_duration=settings["duration"], platform=settings["platform"],
-                layout=settings["layout"], use_llm=settings["use_llm"], progress=progress,
+                layout=settings["layout"], use_llm=settings["use_llm"],
+                split_screen=settings.get("split_screen", True), progress=progress,
                 on_source=have_source, eta_holder=eta_holder,
             )
             if "eta" in eta_holder:
@@ -795,7 +802,10 @@ class App:
             if fr in ("crop", "blur_fit"):
                 shots = _layout.analyze(media, start, end, prefer=fr, workdir=workdir)
             else:
-                shots = _layout.analyze(media, start, end, workdir=workdir)
+                shots = _layout.analyze(
+                    media, start, end, workdir=workdir,
+                    split_screen=cfg["render"].get("split_screen", True),
+                    fallback=cfg["render"].get("layout", "crop"))
                 if fr in ("stacked", "face"):
                     shots = studio.apply_shot_overrides(shots, {str(i): fr for i in range(len(shots))})
             shots = studio.apply_shot_overrides(shots, c.get("shot_layouts"))
@@ -1148,9 +1158,18 @@ class App:
             if self._sys and not fresh and now - self._sys_at < 10:
                 return dict(self._sys)
         cfg = self.config_for()
+        try:
+            opencv_ready = importlib.util.find_spec("cv2") is not None
+        except (ImportError, ValueError):
+            opencv_ready = False
+        from . import layout as _layout
+
+        model_ready = _layout.MODEL_PATH.exists()
         info = {
             "ffmpeg": self._ff["ffmpeg"],
             "libass": self._ff["libass"],
+            "vision": {"opencv": opencv_ready, "model": model_ready,
+                       "ready": opencv_ready and model_ready},
             "ollama": {"enabled": cfg["llm"]["enabled"], "host": cfg["llm"]["host"], "model": cfg["llm"]["model"],
                        "reachable": False, "model_ready": False, "models": []},
             "gpu": False,
@@ -1207,7 +1226,8 @@ class App:
                 "clips": cfg["clip"]["target_count"], "duration": 45,
                 "caption_style": {"preset": cfg["captions"].get("preset", "bold-pop"),
                                   "overrides": {}},
-                "use_llm": cfg["llm"]["enabled"]}),
+                "use_llm": cfg["llm"]["enabled"],
+                "split_screen": cfg["render"].get("split_screen", True)}),
         }
 
     def save_settings(self, raw):
