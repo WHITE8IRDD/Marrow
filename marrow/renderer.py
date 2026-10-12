@@ -22,20 +22,76 @@ def pick_encoder(pref):
     return "h264_nvenc" if _nvenc_ok else "libx264"
 
 
+def _hermite(u):
+    """Smoothstep-ish ease (3u²-2u³) written with ffmpeg expression primitives
+    (zoompan's evaluator has no smoothstep function)."""
+    return f"(pow({u},2)*(3-2*{u}))"
+
+
+def _panel_zoom_expr(intervals, panel, fps, amp=0.07, ramp=0.30):
+    """z(on) for one stacked panel: 1.0 at rest, up to 1+amp while that panel's
+    person speaks, with `ramp`-second eased pushes and releases. `intervals`
+    are [start, end, panel] in seconds relative to the rendered segment."""
+    terms = []
+    for iv in intervals:
+        try:
+            s, e, p = float(iv[0]), float(iv[1]), int(iv[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if p != panel:
+            continue
+        s, e = min(s, e), max(s, e)          # tolerate swapped bounds
+        s = max(0.0, s)
+        e = max(e, s + 0.05)
+        R = max(1.0, ramp * fps)
+        u_in = f"clip((on-{s * fps:.1f})/{R:.1f},0,1)"
+        u_out = f"clip((on-{e * fps:.1f})/{R:.1f},0,1)"
+        terms.append(f"({_hermite(u_in)}-{_hermite(u_out)})")
+    if not terms:
+        return None
+    if len(terms) > 48:                      # keep the filtergraph sane on long clips
+        terms = terms[:48]
+    return f"min(1+{amp}*({'+'.join(terms)}),{1 + amp * 1.02:.4f})"
+
+
 def build_filter_graph(layout, rx, ry, fps, zoom, ass_name=None, shot=None):
     """Build the -filter_complex string. The final labeled output is [v].
     shot: optional per-shot geometry for stacked/face layouts."""
     ratio = rx / ry
-    if layout == "stacked" and shot and shot.get("panels"):
-        (a, b) = shot["panels"][:2]
+    if layout == "face" and not (shot and shot.get("cw")):
+        layout = "crop"          # manual override without track data: center crop
+    if layout == "stacked" and not (shot and shot.get("panels")):
+        # manual override without face data: split the frame left/right instead
         base = (
             f"[0:v]split=2[ta][tb];"
-            f"[ta]crop={int(a['w'])}:{int(a['h'])}:{int(a['x'])}:{int(a['y'])},"
-            f"scale={rx}:{ry // 2}:flags=lanczos[top];"
-            f"[tb]crop={int(b['w'])}:{int(b['h'])}:{int(b['x'])}:{int(b['y'])},"
-            f"scale={rx}:{ry // 2}:flags=lanczos[bot];"
-            f"[top][bot]vstack=inputs=2[base]"
+            f"[ta]crop='min(ih*9/8,iw/2)':h='ow*8/9':x='iw/4-ow/2':y='(ih-oh)/2',"
+            f"scale={rx}:{ry // 2}:flags=lanczos[p0];"
+            f"[tb]crop='min(ih*9/8,iw/2)':h='ow*8/9':x='3*iw/4-ow/2':y='(ih-oh)/2',"
+            f"scale={rx}:{ry // 2}:flags=lanczos[p1];"
+            f"[p0][p1]vstack=inputs=2[base]"
         )
+    elif layout == "stacked" and shot and shot.get("panels"):
+        (a, b) = shot["panels"][:2]
+        ph = ry // 2
+        fps = int(fps or 30)
+        act = shot.get("active") or []
+        panels = []
+        for idx, (tag, pan) in enumerate((("ta", a), ("tb", b))):
+            crop = (f"[{tag}]crop={int(pan['w'])}:{int(pan['h'])}:"
+                    f"{int(pan['x'])}:{int(pan['y'])}")
+            zexpr = _panel_zoom_expr(act, idx, fps) if act else None
+            if zexpr:
+                # push in on the speaker: supersample, then zoompan toward the panel center
+                sw, sh = int(rx * 1.5) & ~1, int(ph * 1.5) & ~1
+                panels.append(
+                    f"{crop},scale={sw}:{sh}:flags=lanczos,"
+                    f"zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                    f"d=1:s={rx}x{ph}:fps={fps}[p{idx}]")
+            else:
+                extra = f",fps={fps}" if act else ""   # keep both panels frame-aligned
+                panels.append(f"{crop},scale={rx}:{ph}:flags=lanczos{extra}[p{idx}]")
+        base = ("[0:v]split=2[ta][tb];" + ";".join(panels) +
+                ";[p0][p1]vstack=inputs=2[base]")
     elif layout == "face" and shot and shot.get("cw"):
         cw, ch = int(shot["cw"]), int(shot.get("ch", ry))
         x0 = float(shot.get("fx0", 0))

@@ -46,7 +46,7 @@ render:
 
 captions:
   enabled: true
-  preset: bold-pop             # default caption style (see the style picker in the UI)
+  preset: opus                 # default caption style (see the style picker in the UI)
   min_gap: 0.22                # caption pace: 0.28 relaxed, 0.22 normal, 0.16 snappy
   font: Arial                  # install a bold font like Montserrat ExtraBold for a better look
   bold: true

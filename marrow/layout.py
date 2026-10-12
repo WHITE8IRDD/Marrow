@@ -13,6 +13,8 @@ from pathlib import Path
 from .utils import log, run_ffmpeg
 
 MODEL_PATH = Path(__file__).parent / "assets" / "models" / "yunet_2023mar.onnx"
+MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
+             "face_detection_yunet/face_detection_yunet_2023mar.onnx")
 SAMPLE_FPS = 2.5
 MIN_FACE_W = 0.06      # fraction of frame width
 MIN_SCORE = 0.6
@@ -23,8 +25,17 @@ EMA_ALPHA = 0.3
 DEADBAND = 0.02
 MAX_PAN = 0.20         # max crop-center travel, fraction of width per second
 
+# Active-speaker focus (stacked layout): mouth motion + audio energy decide who
+# is talking, so the renderer can push in on the right panel at the right time.
+SPEAK_MOTION_FLOOR = 0.018   # normalized mouth motion needed to count as speech
+SPEAK_MOTION_RATIO = 1.40    # the winner must out-move the other face by this ratio
+SPEAK_ENERGY = 0.10          # normalized RMS below this counts as silence
+SPEAK_MIN = 0.6              # focus intervals shorter than this are dropped
+SPEAK_GAP = 0.45             # intervals separated by less than this are merged
+ENERGY_FPS = 16000 / 512     # frames/sec of the cached energy.npy (audio_features.HOP)
+
 _lock = threading.Lock()
-_detector = {"det": None, "size": None, "warned": False}
+_detector = {"det": None, "size": None, "warned": False, "tried_dl": False}
 
 
 def _warn_once(msg, *args):
@@ -32,6 +43,27 @@ def _warn_once(msg, *args):
         if not _detector["warned"]:
             _detector["warned"] = True
             log.warning(msg, *args)
+
+
+def download_model():
+    """One-time, best-effort fetch of the ~230 KB YuNet model. True on success."""
+    import urllib.request
+
+    try:
+        MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        req = urllib.request.Request(MODEL_URL, headers={"User-Agent": "marrow"})
+        with urllib.request.urlopen(req, timeout=45) as r:
+            data = r.read()
+        if len(data) < 100_000:                     # redirects/blocks return tiny bodies
+            raise ValueError(f"unexpected model size {len(data)}")
+        tmp = MODEL_PATH.with_suffix(".part")
+        tmp.write_bytes(data)
+        tmp.replace(MODEL_PATH)
+        log.info("Downloaded the face-detection model (%d KB).", len(data) // 1024)
+        return True
+    except Exception as e:
+        log.debug("Face model download failed: %s", e)
+        return False
 
 
 def get_detector():
@@ -45,8 +77,13 @@ def get_detector():
         _warn_once("OpenCV is not installed; smart layout falls back to crop/blur_fit. "
                    "Install with: pip install -e \".[vision]\"")
         return None
+    if not MODEL_PATH.exists() and not _detector["tried_dl"]:
+        with _lock:
+            _detector["tried_dl"] = True
+        download_model()
     if not MODEL_PATH.exists():
-        _warn_once("Face model %s is missing; smart layout falls back to crop/blur_fit.", MODEL_PATH)
+        _warn_once("Face model %s is missing (auto-download failed); smart layout falls "
+                   "back to crop/blur_fit.", MODEL_PATH)
         return None
     try:
         import cv2
@@ -135,7 +172,7 @@ def detect_faces(frame, det):
 
 def track(samples, frame_w):
     """Group per-sample detections into persistent tracks. Returns tracks as
-    lists of (t, cx, cy, w)."""
+    lists of (t, cx, cy, w, h)."""
     if not frame_w or frame_w <= 0:
         return []
     tracks = []
@@ -152,9 +189,9 @@ def track(samples, frame_w):
                 if d < best_d:
                     best, best_d = i, d
             if best is None:
-                tracks.append([(t, cx, cy, w)])
+                tracks.append([(t, cx, cy, w, h)])
             else:
-                tracks[best].append((t, cx, cy, w))
+                tracks[best].append((t, cx, cy, w, h))
                 used.add(best)
     n = max(1, len(samples))
     return [tr for tr in tracks if len(tr) >= PERSIST_FRAC * n]
@@ -189,6 +226,73 @@ def decide(faces, frame_w):
     if len(faces) > 2:
         return "stacked"
     return "blur_fit"
+
+
+def _mouth_box(cx, cy, w, h):
+    """Mouth region of a face box: middle-lower third, slightly narrowed."""
+    return (int(cx - 0.28 * w), int(cy + 0.10 * h), int(cx + 0.28 * w), int(cy + 0.48 * h))
+
+
+def mouth_motion(g0, g1, box):
+    """Normalized mean absolute difference inside the mouth region (0..1-ish)."""
+    H, W = g0.shape[:2]
+    x0, y0, x1, y1 = box
+    x0 = max(0, min(x0, W - 2)); x1 = max(x0 + 1, min(x1, W))
+    y0 = max(0, min(y0, H - 2)); y1 = max(y0 + 1, min(y1, H))
+    a = g0[y0:y1, x0:x1].astype("float32")
+    b = g1[y0:y1, x0:x1].astype("float32")
+    return float(abs(a - b).mean()) / 255.0
+
+
+def speaker_activity(frames, tracks, rms=None, energy_fps=ENERGY_FPS):
+    """Who talks when, for a two-face stacked shot.
+
+    frames: [(t, bgr)] samples of the shot; tracks: the two persistent face
+    tracks (lists of (t, cx, cy, w, h)); rms: optional normalized audio energy.
+    Returns [[start, end, panel], ...] with panel 0 = left face (top panel),
+    1 = right face (bottom panel). Empty list when nobody clearly speaks —
+    the renderer then keeps the static stacked layout.
+    """
+    if len(tracks) != 2 or len(frames) < 4:
+        return []
+    try:
+        import cv2
+    except ImportError:
+        return []
+    # panel order matches _panels(): faces sorted by center-x (left -> top)
+    order = sorted(range(2), key=lambda i: sum(p[1] for p in tracks[i]) / len(tracks[i]))
+    maps = [{round(p[0], 3): p for p in tracks[i]} for i in order]
+    labels = []
+    for k in range(len(frames) - 1):
+        (t0, f0), (t1, f1) = frames[k], frames[k + 1]
+        mid = (t0 + t1) / 2
+        if rms is not None:
+            idx = int(mid * energy_fps)
+            if idx >= len(rms) or float(rms[idx]) < SPEAK_ENERGY:
+                continue
+        g0 = cv2.cvtColor(f0, cv2.COLOR_BGR2GRAY)
+        g1 = cv2.cvtColor(f1, cv2.COLOR_BGR2GRAY)
+        mot = []
+        for m in maps:
+            p0, p1 = m.get(round(t0, 3)), m.get(round(t1, 3))
+            if p0 is None or p1 is None:
+                mot.append(0.0)
+                continue
+            box = _mouth_box((p0[1] + p1[1]) / 2, (p0[2] + p1[2]) / 2,
+                             (p0[3] + p1[3]) / 2, (p0[4] + p1[4]) / 2)
+            mot.append(mouth_motion(g0, g1, box))
+        win = 0 if mot[0] >= mot[1] else 1
+        if mot[win] < SPEAK_MOTION_FLOOR or mot[win] < SPEAK_MOTION_RATIO * mot[1 - win]:
+            continue
+        labels.append((t0, t1, win))
+    merged = []
+    for t0, t1, p in labels:
+        if merged and merged[-1][2] == p and t0 - merged[-1][1] <= SPEAK_GAP:
+            merged[-1][1] = t1
+        else:
+            merged.append([t0, t1, p])
+    return [[round(s, 2), round(e, 2), p] for s, e, p in merged if e - s >= SPEAK_MIN]
+
 
 
 def _panels(faces, W, H):
@@ -240,6 +344,16 @@ def analyze(src, start, end, prefer=None, workdir=None):
     cuts = [c for c in detect_shots(src, start, end) if start < c < end]
     bounds = [start] + cuts + [end]
     samples = sample_frames(src, start, end)
+    rms = None
+    if workdir is not None:                       # cached audio energy gates the mouth motion
+        try:
+            import numpy as np
+
+            ecache = Path(workdir) / "energy.npy"
+            if ecache.exists():
+                rms = np.load(ecache)
+        except Exception:
+            rms = None
     by_shot, si = {}, 0
     for t, frame in samples:
         while si + 1 < len(bounds) - 1 and t >= bounds[si + 1]:
@@ -263,6 +377,12 @@ def analyze(src, start, end, prefer=None, workdir=None):
         if layout == "stacked":
             ordered = sorted(faces, key=lambda f: f[0])[:2]
             shot["panels"] = _panels([(f[0], f[1], f[2], 0) for f in ordered], W, H)
+            try:
+                act = speaker_activity(fr, [f[3] for f in ordered], rms)
+                if act:
+                    shot["active"] = act
+            except Exception:
+                log.debug("active-speaker detection failed", exc_info=True)
         elif layout == "face":
             tr = max(faces, key=lambda f: len(f[4]))[4]
             sm = smooth_centers([(p[0], p[1]) for p in tr], W)

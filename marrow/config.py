@@ -41,7 +41,7 @@ DEFAULTS = {
     },
     "captions": {
         "enabled": True,
-        "preset": "bold-pop",
+        "preset": "opus",
         "min_gap": 0.22,
         "font": "Arial",
         "bold": True,

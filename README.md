@@ -7,7 +7,8 @@ moments, rendered as captioned vertical clips for **YouTube Shorts** and **Faceb
 
 Download → Whisper word timestamps → audio energy → sentence-aligned candidate windows →
 heuristic shortlist → local LLM (Ollama) judges hook / standalone / emotion / payoff →
-best non-overlapping clips → word-by-word captions → 9:16 render.
+best non-overlapping clips → word-by-word captions (smooth pop + optional karaoke hold)
+→ per-shot smart layout with active-speaker focus → 9:16 render.
 
 ## Install (Windows PowerShell)
 
@@ -41,8 +42,15 @@ Clips with two people on camera render **stacked** (top/bottom panels with capti
 on the seam); single speakers get a **face-tracked crop**; slides and screen
 recordings use **blur fit**. Fully automatic per shot — override per shot in the
 Edits inspector or Framing control. Face detection is optional:
-`pip install -e ".[vision]"` (OpenCV YuNet, local model, ~230 KB auto-download).
-Without it, Marrow uses the configured crop/blur fit and logs one warning.
+`pip install -e ".[vision]"` (OpenCV YuNet; the ~230 KB model downloads itself on
+first use, or via Settings → Download models now). Without it, Marrow uses the
+configured crop/blur fit and logs one warning.
+
+**Active-speaker focus.** In stacked shots Marrow watches each face's mouth motion
+(gated by the audio energy) to work out who is talking, and gently pushes in on the
+active speaker's panel while they speak — the view follows the conversation instead
+of sitting still. The focus intervals are stored with each clip (`shots[].active` in
+the manifest) and shown as a dot on the shot chips in Edits → Framing.
 
 `python -m marrow <url>` also works.
 
@@ -66,6 +74,8 @@ different clip count or style is fast. Use `--force` to start over.
 | Slides or screen recordings | `render.layout: blur_fit` |
 | Captions hidden by app UI | Raise `platforms.<name>.caption_margin_v` |
 | Less shouty captions | `captions.uppercase: false` |
+| Karaoke-style captions | `captions.preset: karaoke` (spoken words stay highlighted) |
+| Opus-Clip-style captions | `captions.preset: opus` (default; smooth color + soft fades) |
 | Smoother, more dynamic look | `zoom.enabled: true` (slower; crop layout only) |
 
 Platform limits change. `config.yaml` has YouTube Shorts at 180 s (up to 3 minutes since

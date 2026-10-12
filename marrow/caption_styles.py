@@ -10,6 +10,9 @@ BASE = dict(
     highlight_mode="color",                                    # color | pill
     pill_color="#FFFFFF", pill_text="#000000", pill_pad=10,
     active_scale=110, emphasis_scale=125, anim="pop",          # pop | none
+    smooth=True,                                             # ease the highlight color in (color mode)
+    hold_highlight=False,                                    # karaoke: spoken words stay highlighted
+    fade_in=0, fade_out=0,                                   # per-event fade, milliseconds
     display="line",                                          # line | word (one word at a time)
     word_colors=None,                                        # cycled per word in word mode (None = highlight_color)
     strip_punct=True,
@@ -19,6 +22,13 @@ BASE = dict(
 )
 
 PRESETS = {
+    "opus":     dict(label="Opus", font="Montserrat ExtraBold", font_file="Montserrat-ExtraBold.ttf",
+                     font_ar="Cairo", font_ar_file="Cairo-Bold.ttf", bold=False, outline=5,
+                     size=76, highlight_color="#B9FF3D", active_scale=112, emphasis_scale=126,
+                     max_words_per_line=3, fade_in=90, fade_out=60),
+    "karaoke":  dict(label="Karaoke", font="Montserrat ExtraBold", font_file="Montserrat-ExtraBold.ttf",
+                     font_ar="Cairo", font_ar_file="Cairo-Bold.ttf", bold=False, outline=5,
+                     size=76, hold_highlight=True, highlight_color="#FFE600", active_scale=106),
     "bold-pop": dict(label="Bold Pop", font="Montserrat ExtraBold", font_file="Montserrat-ExtraBold.ttf",
                      font_ar="Cairo", font_ar_file="Cairo-Bold.ttf", bold=False, outline=5),
     "hormozi":  dict(label="Hormozi", font="Anton", font_file="Anton-Regular.ttf", bold=False,

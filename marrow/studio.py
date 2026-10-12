@@ -156,6 +156,17 @@ def needs_segmented_render(shots):
     return any((s.get("layout") in ("stacked", "face")) for s in (shots or []))
 
 
+def relative_shot(sg, seg_start, seg_dur):
+    """Shot dict for the renderer: times (incl. active-speaker intervals) made
+    relative to the segment the renderer will encode from 0."""
+    shot = dict(sg, start=0.0, end=seg_dur)
+    act = sg.get("active")
+    if act:
+        rel = [[max(0.0, a - seg_start), min(seg_dur, b - seg_start), p] for a, b, p in act]
+        shot["active"] = [[round(a, 3), round(b, 3), p] for a, b, p in rel if b - a > 0.05]
+    return shot
+
+
 def apply_shot_overrides(shots, overrides):
     """Replace per-shot layouts with user overrides {index: layout}."""
     if not overrides:
@@ -205,7 +216,7 @@ def render_clip_shots(cfg, media, workdir, words, rank, start, end, plats, out_d
                              pcfg["res_x"], pcfg["res_y"], pcfg["caption_margin_v"],
                              shots=rel)
             seg_out = tmpdir / f"s{i}.mp4"
-            seg_shot = dict(sg, start=0.0, end=seg_dur)
+            seg_shot = relative_shot(sg, sg["start"], seg_dur)
             render_clip(media, sg["start"], sg["end"], ass_path, seg_out, cfg, plat,
                         on_progress=lambda f, _s=sg["start"], _e=sg["end"]: seg_prog(f, _s, _e),
                         layout=sg["layout"] if sg["layout"] in ("stacked", "face") else None,
@@ -392,7 +403,7 @@ def export_clip(cfg, media, workdir, words, rank, start, end, spec, out_path,
                 generate_ass(words, sg["start"], sg["end"], ass_path, style,
                              rx, ry, pcfg["caption_margin_v"], shots=rel)
             seg_out = tmpdir / f"s{i}.mp4"
-            seg_shot = dict(sg, start=0.0, end=round(sg["end"] - sg["start"], 3))
+            seg_shot = relative_shot(sg, sg["start"], round(sg["end"] - sg["start"], 3))
             lay = sg["layout"] if sg["layout"] in ("stacked", "face") else cfg["render"]["layout"]
             run_args(make_args(ass_path, lay,
                                seg_shot if sg["layout"] in ("stacked", "face") else None,
@@ -500,7 +511,8 @@ def render_caption_preview(cfg, source, workdir, words, t, style, platform="shor
     if shots:
         cur = next((s for s in shots if s.get("start", 0) <= t <= s.get("end", 0)), None)
         if cur and cur.get("layout") in ("stacked", "face"):
-            use_layout, use_shot = cur["layout"], dict(cur, start=0.0, end=4.0)
+            use_layout = cur["layout"]
+            use_shot = relative_shot(cur, t0, 4.0)
     graph = build_filter_graph(use_layout, rx, ry, 30, {"enabled": False}, ass.name,
                                shot=use_shot) + ";[v]scale=360:-2,format=yuv420p[p]"
     jpg = (d / "preview.jpg").resolve()  # absolute: cwd below is d itself

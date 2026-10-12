@@ -36,19 +36,35 @@ def _alpha(opacity_pct):                      # ASS alpha: 00 opaque .. FF trans
 def _on(st, scale):
     start = int(scale * 0.8) if st["anim"] == "pop" else scale
     t = f"\\fscx{start}\\fscy{start}"
+    hl = hex_to_bgr(st["highlight_color"])
     if st["highlight_mode"] == "pill":
         t += (f"\\1c&H{hex_to_bgr(st['pill_text'])}&\\3c&H{hex_to_bgr(st['pill_color'])}&"
               f"\\bord{st['pill_pad']}\\shad0")
+        if st["anim"] == "pop":
+            t += f"\\t(0,110,\\fscx{scale}\\fscy{scale})"
+    elif st.get("smooth", True) and st["anim"] == "pop":
+        # modern karaoke feel: the color eases in while the word pops
+        t += f"\\1c&H{hex_to_bgr(st['text_color'])}&\\t(0,110,\\fscx{scale}\\fscy{scale}\\1c&H{hl}&)"
     else:
-        t += f"\\1c&H{hex_to_bgr(st['highlight_color'])}&"
-    if st["anim"] == "pop":
-        t += f"\\t(0,110,\\fscx{scale}\\fscy{scale})"
+        t += f"\\1c&H{hl}&"
+        if st["anim"] == "pop":
+            t += f"\\t(0,110,\\fscx{scale}\\fscy{scale})"
     return t
 
 
 def _off(st):
     return (f"\\1c&H{hex_to_bgr(st['text_color'])}&\\3c&H{hex_to_bgr(st['outline_color'])}&"
             f"\\bord{st['outline']}\\shad{st['shadow']}\\fscx100\\fscy100")
+
+
+def _hold(st):
+    """Tag for already-spoken words in karaoke (hold_highlight) mode."""
+    return f"\\1c&H{hex_to_bgr(st['highlight_color'])}&"
+
+
+def _fade(st):
+    fi, fo = int(st.get("fade_in") or 0), int(st.get("fade_out") or 0)
+    return f"\\fad({fi},{fo})" if (fi or fo) else ""
 
 
 def clean_words(words):
@@ -145,7 +161,8 @@ def generate_ass(words, clip_start, clip_end, output_path, style, res_x=1080, re
         "", "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
-    blur = f"{{\\blur{st['blur']}}}" if st["blur"] else ""
+    lead_tags = (f"\\blur{st['blur']}" if st["blur"] else "") + _fade(st)
+    lead = f"{{{lead_tags}}}" if lead_tags else ""
     seam = []
     if shots:
         for sh in shots:
@@ -183,7 +200,8 @@ def generate_ass(words, clip_start, clip_end, output_path, style, res_x=1080, re
                 end = max(end, min(w0.start + 0.25, nxt - 0.01))        # punctuation pause
             end = min(max(end, w0.start + 0.05), nxt - 0.01 if nxt != float("inf") else end)
             col = palette[k % len(palette)]
-            tag = f"\\1c&H{col}&\\fscx70\\fscy70\\t(0,90,\\fscx108\\fscy108)\\t(90,160,\\fscx100\\fscy100)"
+            tag = (f"\\1c&H{col}&{_fade(st)}\\fscx70\\fscy70"
+                   f"\\t(0,90,\\fscx108\\fscy108)\\t(90,160,\\fscx100\\fscy100)")
             raw.append((w0.start, end, "{" + tag + "}" + txt))
     else:
         lines = group_words(clip_words, st["max_words_per_line"], st["max_chars_per_line"])
@@ -193,14 +211,17 @@ def generate_ass(words, clip_start, clip_end, output_path, style, res_x=1080, re
                 end = min(line[k + 1].start, w.end + 0.35) if k + 1 < len(line) else w.end + 0.1
                 end = max(min(end, limit), w.start + 0.05)
                 parts = []
+                hold = st.get("hold_highlight") and st["highlight_mode"] != "pill"
                 for i, ww in enumerate(line):
                     txt = ass_escape(ww.text.upper() if uppercase else ww.text)
                     if i == k and st["highlight_mode"] != "none":
                         sc = emph if ww.score >= threshold else active
                         parts.append("{" + _on(st, sc) + "}" + txt + "{" + _off(st) + "}")
+                    elif hold and i < k:
+                        parts.append("{" + _hold(st) + "}" + txt + "{" + _off(st) + "}")
                     else:
                         parts.append(txt)
-                raw.append((w.start, end, blur + " ".join(parts)))  # logical order; libass does the RTL reorder
+                raw.append((w.start, end, lead + " ".join(parts)))  # logical order; libass does the RTL reorder
 
     events = []
     if seam:

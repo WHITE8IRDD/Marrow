@@ -1,7 +1,6 @@
 'use strict';
 /* ---------- icons: inline SVG (emoji look different on every OS, so none are used) ---------- */
 const ICON = {
-  home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
@@ -56,8 +55,8 @@ function setAccent(a) {
   try { localStorage.setItem('accent', v || 'graphite'); } catch (_) {}
 }
 setTheme(themeChoice());
-let _accent = 'graphite';
-try { _accent = localStorage.getItem('accent') || 'graphite'; } catch (_) {}
+let _accent = 'violet';
+try { _accent = localStorage.getItem('accent') || 'violet'; } catch (_) {}
 setAccent(_accent);
 document.getElementById('themeBtn').addEventListener('click', () => {
   setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
@@ -260,6 +259,7 @@ function customizeHTML(ov, presetKey) {
     <div class="cell"><label>Words per line</label>${ovSeg('max_words_per_line', [['', 'Auto'], [1, '1'], [2, '2'], [3, '3']], ov.max_words_per_line == null ? '' : ov.max_words_per_line)}</div>
     <div class="cell"><label>Position</label>${ovSeg('position', [['lower', 'Bottom'], ['center', 'Center'], ['top', 'Top']], pos)}</div>
     <div class="cell"><label>Pop animation</label><label class="tog compact"><input type="checkbox" data-ov="anim_pop" ${ov.anim === 'none' || (ov.anim === undefined && p.anim === 'none') ? '' : 'checked'}><span class="knob"></span></label></div>
+    <div class="cell"><label>Karaoke hold<small style="font-weight:400"> Spoken words stay lit</small></label><label class="tog compact"><input type="checkbox" data-ov="hold_highlight" ${ov.hold_highlight !== undefined ? (ov.hold_highlight ? 'checked' : '') : (p.hold_highlight ? 'checked' : '')}><span class="knob"></span></label></div>
     <div class="cell"><label>Highlight color</label><div class="row"><input type="color" data-ov="highlight_color" value="${ov.highlight_color || p.highlight_color || '#FFE600'}"><span class="hint mono">${ov.highlight_color || p.highlight_color || '#FFE600'}</span></div></div>
     <div class="cell"><label>Text color</label><div class="row"><input type="color" data-ov="text_color" value="${ov.text_color || p.text_color || '#FFFFFF'}"><span class="hint mono">${ov.text_color || p.text_color || '#FFFFFF'}</span></div></div>
     ${wordMode ? `<div class="cell"><label>Word colors</label><div class="wcols">${[0, 1, 2].map(i => `<input type="color" data-ov-list="word_colors" value="${wc[i] || (i === 0 ? (ov.highlight_color || p.highlight_color || '#FFE600') : i === 1 ? '#FFFFFF' : '#00F060')}">`).join('')}</div></div>` : ''}
@@ -386,8 +386,11 @@ let STYLES = { base: {}, presets: {} }, sampleLang = 'en', tickIdx = 0;
 /* Hardcoded fallback so the carousel never renders blank (used until /api/caption-styles loads, or if it fails) */
 const FALLBACK_BASE = { font: 'Montserrat ExtraBold', font_ar: 'Cairo', size: 72, bold: true, uppercase: true,
   text_color: '#FFFFFF', highlight_color: '#FFE600', outline_color: '#000000', outline: 4, shadow: 2,
-  highlight_mode: 'color', pill_color: '#FFFFFF', pill_text: '#000000', active_scale: 110, position: 'lower', display: 'line', anim: 'pop' };
+  highlight_mode: 'color', pill_color: '#FFFFFF', pill_text: '#000000', active_scale: 110, position: 'lower', display: 'line', anim: 'pop',
+  smooth: true, hold_highlight: false, fade_in: 0, fade_out: 0 };
 const FALLBACK_PRESETS = {
+  'opus': { label: 'Opus', font: 'Montserrat ExtraBold', font_file: 'Montserrat-ExtraBold.ttf', font_ar: 'Cairo', font_ar_file: 'Cairo-Bold.ttf', outline: 5, size: 76, highlight_color: '#B9FF3D', active_scale: 112, emphasis_scale: 126, max_words_per_line: 3, fade_in: 90, fade_out: 60 },
+  'karaoke': { label: 'Karaoke', font: 'Montserrat ExtraBold', font_file: 'Montserrat-ExtraBold.ttf', font_ar: 'Cairo', font_ar_file: 'Cairo-Bold.ttf', outline: 5, size: 76, hold_highlight: true, highlight_color: '#FFE600', active_scale: 106 },
   'bold-pop': { label: 'Bold Pop', font: 'Montserrat ExtraBold', font_file: 'Montserrat-ExtraBold.ttf', font_ar: 'Cairo', font_ar_file: 'Cairo-Bold.ttf', outline: 5, highlight_color: '#FFE600' },
   'hormozi': { label: 'Hormozi', font: 'Anton', font_file: 'Anton-Regular.ttf', font_ar: 'Tajawal', font_ar_file: 'Tajawal-ExtraBold.ttf', highlight_color: '#00F060', size: 84, outline: 6, max_words_per_line: 3, position: 'center', active_scale: 115 },
   'beast': { label: 'Beast', font: 'Bebas Neue', font_file: 'BebasNeue-Regular.ttf', font_ar: 'Cairo', font_ar_file: 'Cairo-Bold.ttf', highlight_color: '#FF3B30', size: 104, outline: 7, max_words_per_line: 3, position: 'center', active_scale: 125 },
@@ -442,7 +445,7 @@ injectFonts(FALLBACK_PRESETS);
 
 function wordSpans(p, lang) {
   const ar = lang === 'ar';
-  return SAMPLES[lang].map(w => `<span class="w" data-hl="${p.highlight_color}" data-pill="${p.highlight_mode === 'pill' ? p.pill_color : ''}" data-pt="${p.pill_text}" data-sc="${p.active_scale || 110}" style="color:${p.text_color}">${ar || !p.uppercase ? w : w.toUpperCase()}</span>`).join(' ');
+  return SAMPLES[lang].map(w => `<span class="w" data-hl="${p.highlight_color}" data-pill="${p.highlight_mode === 'pill' ? p.pill_color : ''}" data-pt="${p.pill_text}" data-sc="${p.active_scale || 110}" data-hold="${p.hold_highlight ? 1 : 0}" style="color:${p.text_color}">${ar || !p.uppercase ? w : w.toUpperCase()}</span>`).join(' ');
 }
 function prevStyle(p) {
   const fam = (sampleLang === 'ar' ? (p.font_ar || p.font) : (p.font || p.font_ar)) || 'Arial';
@@ -583,6 +586,7 @@ function renderLiveCaption(capEl, st, lang = sampleLang, tick = tickIdx) {
         html += '<span class="line-break"></span>';
       }
       const on = (i === activeWordIdx);
+      const held = !on && !!st.hold_highlight && !isPill && i < activeWordIdx;
       let spanStyle = '';
       if (on) {
         if (isPill) {
@@ -593,10 +597,12 @@ function renderLiveCaption(capEl, st, lang = sampleLang, tick = tickIdx) {
         if (st.anim !== 'none') {
           spanStyle += `transform:scale(${activeScale});`;
         }
+      } else if (held) {
+        spanStyle = `color:${hlColor};transform:scale(1);`;
       } else {
         spanStyle = `color:${textColor};transform:scale(1);`;
       }
-      html += `<span class="w ${on ? 'active-w' : ''}" style="${spanStyle}">${w}</span> `;
+      html += `<span class="w ${on ? 'active-w' : ''}${held ? ' held-w' : ''}" style="${spanStyle}">${w}</span> `;
     });
     capEl.innerHTML = html.trim();
   }
@@ -634,8 +640,6 @@ function updateHomePreview() {
     modalPhone.classList.toggle('layout-crop', !isBlurFit);
     modalPhone.classList.toggle('has-zoom', !!o.zoom && !isBlurFit);
 
-    const modalFrameChip = document.getElementById('modalFrameChip');
-    if (modalFrameChip) modalFrameChip.textContent = isBlurFit ? 'Blur fit' : 'Center crop';
 
     const modalCap = document.getElementById('modalCap');
     if (modalCap) renderLiveCaption(modalCap, st, sampleLang, tickIdx);
@@ -773,18 +777,12 @@ function openPreviewModal() {
   const hasCaptions = (curOpts.captions !== false);
   const hasZoom = !!curOpts.zoom;
   
-  const presets = Object.entries(STYLES.presets || FALLBACK_PRESETS);
-  const presetOptions = presets.map(([k, v]) =>
-    `<option value="${k}" ${k === curStyle.presetKey ? 'selected' : ''}>${esc(v.label || k)}</option>`
-  ).join('');
-
   const modalHtml = `
   <div class="prev-modal-wrap" id="prevModalWrap">
     <div class="prev-modal-head">
       <div class="pm-title-group">
         <div class="pm-title">${ico('film')}<span>Preview Inspector</span></div>
         <span class="chip">9:16</span>
-        <span class="chip" id="modalFrameChip">${isBlurFit ? 'Blur fit' : 'Center crop'}</span>
       </div>
       <div class="pm-head-actions">
         <button type="button" class="btn ghost sm" id="modalFsBtn" title="Fullscreen">${ico('expand')}<span>Fullscreen</span></button>
@@ -805,75 +803,16 @@ function openPreviewModal() {
           <div class="livecap cap" id="modalCap"></div>
         </div>
         
+        <div class="pm-chips" id="modalChips" aria-hidden="true"></div>
         <div class="prev-transport">
           <button type="button" class="icon sm" id="modalPlayBtn" title="Play / Pause">${ico('pause', 'fill')}</button>
           <span class="time mono" id="modalTimeCur">0:00</span>
           <input type="range" class="modal-scrubber" id="modalScrubber" min="0" max="100" step="0.1" value="0" aria-label="Seek preview">
           <span class="time mono" id="modalTimeDur">0:00</span>
-          <button type="button" class="icon sm" id="modalMuteBtn" title="Mute / Unmute">${ico('sun')}</button>
+          <button type="button" class="icon sm" id="modalMuteBtn" title="Mute / Unmute"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.08"/></svg></button>
         </div>
       </div>
       
-      <div class="prev-modal-sidebar">
-        <h4>Live Customization</h4>
-        <p class="hint">Adjust settings in real time to inspect exact rendering output.</p>
-        
-        <div class="pm-ctrl-group">
-          <label class="label">Framing</label>
-          <div class="seg" id="modalFramingSeg" data-opt="layout">
-            <button type="button" data-v="crop" class="${!isBlurFit ? 'on' : ''}">Center crop</button>
-            <button type="button" data-v="blur_fit" class="${isBlurFit ? 'on' : ''}">Blur fit</button>
-          </div>
-        </div>
-        
-        <div class="pm-ctrl-group">
-          <label class="label">Caption preset</label>
-          <select id="modalPresetSelect" class="txt">${presetOptions}</select>
-        </div>
-        
-        <div class="pm-ctrl-group">
-          <div class="row-between"><label class="label">Text size</label><output id="modalSizeOut">${curStyle.font_size || curStyle.size || 72}</output></div>
-          <input type="range" id="modalSizeRange" min="40" max="110" value="${curStyle.font_size || curStyle.size || 72}">
-        </div>
-        
-        <div class="pm-ctrl-group">
-          <div class="row" style="gap:10px">
-            <div style="flex:1"><label class="label">Highlight</label><div class="row" style="gap:6px"><input type="color" id="modalHlColor" value="${curStyle.highlight_color || '#FFE600'}"><span class="hint mono" id="modalHlHint" style="font-size:11px">${curStyle.highlight_color || '#FFE600'}</span></div></div>
-            <div style="flex:1"><label class="label">Text color</label><div class="row" style="gap:6px"><input type="color" id="modalTxtColor" value="${curStyle.text_color || '#FFFFFF'}"><span class="hint mono" id="modalTxtHint" style="font-size:11px">${curStyle.text_color || '#FFFFFF'}</span></div></div>
-          </div>
-        </div>
-        
-        <div class="pm-ctrl-group">
-          <label class="label">Position</label>
-          <div class="seg dense" id="modalPosSeg">
-            <button type="button" data-v="lower" class="${(curStyle.position || 'lower') === 'lower' ? 'on' : ''}">Bottom</button>
-            <button type="button" data-v="center" class="${curStyle.position === 'center' ? 'on' : ''}">Center</button>
-            <button type="button" data-v="top" class="${curStyle.position === 'top' ? 'on' : ''}">Top</button>
-          </div>
-        </div>
-
-        <div class="pm-ctrl-group">
-          <label class="label">Display mode</label>
-          <div class="seg dense" id="modalDispSeg">
-            <button type="button" data-v="line" class="${(curStyle.display || 'line') !== 'word' ? 'on' : ''}">Line</button>
-            <button type="button" data-v="word" class="${curStyle.display === 'word' ? 'on' : ''}">Word</button>
-          </div>
-        </div>
-
-        <div class="pm-ctrl-group">
-          <label class="label">Sample Language</label>
-          <div class="seg sm" id="modalLangSeg">
-            <button type="button" data-l="en" class="${sampleLang === 'en' ? 'on' : ''}">English</button>
-            <button type="button" data-l="ar" class="${sampleLang === 'ar' ? 'on' : ''}">العربية</button>
-          </div>
-        </div>
-        
-        <div class="pm-ctrl-group pm-togs">
-          <label class="tog compact"><input type="checkbox" id="modalCapTog" ${hasCaptions ? 'checked' : ''}><span class="knob"></span><span class="tl">Animated captions</span></label>
-          <label class="tog compact"><input type="checkbox" id="modalZoomTog" ${hasZoom ? 'checked' : ''}><span class="knob"></span><span class="tl">Slow zoom effect</span></label>
-        </div>
-      </div>
-    </div>
   </div>`;
 
   const m = openModal(modalHtml, true);
@@ -893,6 +832,15 @@ function openPreviewModal() {
     mvb.play().catch(() => {});
   }
   
+  const chips = $('#modalChips', m);
+  if (chips) {
+    const presetLabel = (STYLES.presets?.[curStyle.presetKey] || FALLBACK_PRESETS[curStyle.presetKey] || {}).label || curStyle.presetKey;
+    chips.innerHTML = [
+      isBlurFit ? 'Blur fit' : 'Center crop',
+      hasCaptions ? presetLabel + ' captions' : 'Captions off',
+      hasZoom ? 'Slow zoom' : null,
+    ].filter(Boolean).map(c => `<span class="chip">${esc(c)}</span>`).join('');
+  }
   updateHomePreview();
 
   const scrub = $('#modalScrubber', m);
@@ -986,141 +934,6 @@ function openPreviewModal() {
       closeModal();
     };
   }
-
-  // Framing
-  $$('#modalFramingSeg button', m).forEach(btn => {
-    btn.onclick = () => {
-      $$('#modalFramingSeg button', m).forEach(b => b.classList.toggle('on', b === btn));
-      const val = btn.dataset.v;
-      const homeSeg = document.querySelector('#optbox [data-opt="layout"]');
-      if (homeSeg) {
-        $$('button', homeSeg).forEach(b => b.classList.toggle('on', b.dataset.v === val));
-      }
-      paintPlan();
-      updateHomePreview();
-    };
-  });
-
-  // Preset
-  const presetSel = $('#modalPresetSelect', m);
-  if (presetSel) {
-    presetSel.onchange = () => {
-      const key = presetSel.value;
-      const homePreset = document.querySelector('#styleCard .stylePreset');
-      if (homePreset) homePreset.value = key;
-      paintStyles($('#styleCard') || document);
-      $('#homeCustomize').innerHTML = customizeHTML(readStyleRoot($('#styleCard')).overrides, key);
-      paintPlan();
-      updateHomePreview();
-    };
-  }
-
-  // Size
-  const sizeRange = $('#modalSizeRange', m);
-  const sizeOut = $('#modalSizeOut', m);
-  if (sizeRange) {
-    sizeRange.oninput = () => {
-      if (sizeOut) sizeOut.textContent = sizeRange.value;
-      const homeRange = document.querySelector('#homeCustomize [data-ov="font_size"]');
-      if (homeRange) {
-        homeRange.value = sizeRange.value;
-        delete homeRange.dataset.auto;
-        const out = homeRange.parentElement?.querySelector('output');
-        if (out) out.textContent = sizeRange.value;
-      }
-      updateHomePreview();
-    };
-  }
-
-  // Highlight & Text Color
-  const hlIn = $('#modalHlColor', m);
-  const txtIn = $('#modalTxtColor', m);
-  if (hlIn) {
-    hlIn.oninput = () => {
-      $('#modalHlHint', m).textContent = hlIn.value;
-      const homeHl = document.querySelector('#homeCustomize [data-ov="highlight_color"]');
-      if (homeHl) {
-        homeHl.value = hlIn.value;
-        const hint = homeHl.parentElement?.querySelector('.hint');
-        if (hint) hint.textContent = hlIn.value;
-      }
-      updateHomePreview();
-    };
-  }
-  if (txtIn) {
-    txtIn.oninput = () => {
-      $('#modalTxtHint', m).textContent = txtIn.value;
-      const homeTxt = document.querySelector('#homeCustomize [data-ov="text_color"]');
-      if (homeTxt) {
-        homeTxt.value = txtIn.value;
-        const hint = homeTxt.parentElement?.querySelector('.hint');
-        if (hint) hint.textContent = txtIn.value;
-      }
-      updateHomePreview();
-    };
-  }
-
-  // Position
-  $$('#modalPosSeg button', m).forEach(btn => {
-    btn.onclick = () => {
-      $$('#modalPosSeg button', m).forEach(b => b.classList.toggle('on', b === btn));
-      const val = btn.dataset.v;
-      const homeSeg = document.querySelector('#homeCustomize [data-ov="position"]');
-      if (homeSeg) {
-        $$('button', homeSeg).forEach(b => b.classList.toggle('on', b.dataset.v === val));
-      }
-      updateHomePreview();
-    };
-  });
-
-  // Display mode
-  $$('#modalDispSeg button', m).forEach(btn => {
-    btn.onclick = () => {
-      $$('#modalDispSeg button', m).forEach(b => b.classList.toggle('on', b === btn));
-      const val = btn.dataset.v;
-      const homeSeg = document.querySelector('#homeCustomize [data-ov="display"]');
-      if (homeSeg) {
-        $$('button', homeSeg).forEach(b => b.classList.toggle('on', b.dataset.v === val));
-        const root = document.getElementById('styleCard') || document;
-        const curPreset = $('.stylePreset', root)?.value || 'bold-pop';
-        const curOv = readStyleRoot(root).overrides;
-        curOv.display = val;
-        $('#homeCustomize').innerHTML = customizeHTML(curOv, curPreset);
-      }
-      updateHomePreview();
-    };
-  });
-
-  // Sample Language
-  $$('#modalLangSeg button', m).forEach(btn => {
-    btn.onclick = () => {
-      sampleLang = btn.dataset.l;
-      $$('#modalLangSeg button', m).forEach(b => b.classList.toggle('on', b === btn));
-      $$('.sampleLang button').forEach(x => x.classList.toggle('on', x.dataset.l === sampleLang));
-      repaintStyles();
-      updateHomePreview();
-    };
-  });
-
-  // Toggles: Captions & Zoom
-  const capTog = $('#modalCapTog', m);
-  if (capTog) {
-    capTog.onchange = () => {
-      const homeCap = document.querySelector('#optbox [data-opt="captions"]');
-      if (homeCap) homeCap.checked = capTog.checked;
-      paintPlan();
-      updateHomePreview();
-    };
-  }
-  const zoomTog = $('#modalZoomTog', m);
-  if (zoomTog) {
-    zoomTog.onchange = () => {
-      const homeZoom = document.querySelector('#optbox [data-opt="zoom"]');
-      if (homeZoom) homeZoom.checked = zoomTog.checked;
-      paintPlan();
-      updateHomePreview();
-    };
-  }
 }
 
 function paintStyles(root) {
@@ -1180,7 +993,8 @@ setInterval(() => {
       return;
     }
     const on = i === tickIdx, pill = w.dataset.pill;
-    w.style.color = on ? (pill ? w.dataset.pt : w.dataset.hl) : '';
+    const held = !on && w.dataset.hold === '1' && !pill && i < tickIdx;
+    w.style.color = on ? (pill ? w.dataset.pt : w.dataset.hl) : (held ? w.dataset.hl : '');
     w.style.transform = on ? `scale(${w.dataset.sc / 100})` : 'scale(1)';
     w.style.background = on && pill ? pill : 'transparent';
     w.style.borderRadius = '.25em'; w.style.padding = on && pill ? '0 .25em' : '0';
@@ -1558,7 +1372,6 @@ function setFoundState(st, msg) {
   }
   setGenBtn();
 }
-function fmtDur(sec) { return sec == null ? '–' : fmtT(sec); }
 function paintFoundCard(p) {
   const w = $('#foundWrap'); if (!w) return;
   const i = p.info || {};
@@ -1964,7 +1777,7 @@ function cardEl(p, c, sig) {
   const sc = Math.round(c.score * 100);
   const tags = (c.hashtags || []).slice(0, 3).map(t => `#${esc(t)}`).join(' ');
   el.innerHTML = `<div class="vid" data-act="view-clip">
-      <video muted playsinline preload="metadata" ${c.thumb ? `poster="${c.thumb}"` : ''} src="${c.urls[plat0]}"></video>
+      <video muted playsinline preload="none" ${c.thumb ? `poster="${c.thumb}"` : ''} src="${c.urls[plat0]}"></video>
       <div class="score ${scoreCls(c.score)}" style="--v:${sc}" title="Marrow score: how strongly this moment ranked"><span>${sc}</span></div>
       <span class="dur">${fmtT(c.duration)}</span>
       <button class="expand" data-act="view-clip" title="Watch fullscreen" aria-label="Watch fullscreen">${ico('expand')}</button>
@@ -2218,6 +2031,7 @@ function mountLiveCaptions(video, words, st, start0) {
   const pos = st.position === 'center' ? 'top:38%;bottom:auto' : st.position === 'top' ? 'top:12%;bottom:auto' : '';
   el.setAttribute('style', `font-family:'${st.font || 'Arial'}',Arial;font-weight:${st.bold === false ? 400 : 700};` +
     `color:${st.text_color || '#fff'};font-size:${size};${pos};` +
+    `--hl:${st.highlight_color || '#FFE600'};` +
     (st.shadow === 0 ? '' : `text-shadow:0 .06em .12em #000a;`));
   const per = st.max_words_per_line || 4;
   const step = () => {
@@ -2226,7 +2040,11 @@ function mountLiveCaptions(video, words, st, start0) {
     const i = words.findIndex(w => t >= w.s && t < w.e);
     if (i >= 0) {
       const a = Math.max(0, i - (i % per)), line = words.slice(a, a + per);
-      el.innerHTML = line.map((w, j) => `<span class="${a + j === i ? 'on' : ''}">${esc(st.uppercase === false ? w.t : w.t.toUpperCase())}</span>`).join(' ');
+      const hl = st.highlight_color || '#FFE600';
+      el.innerHTML = line.map((w, j) => {
+        const on = a + j === i, held = !on && !!st.hold_highlight && a + j < i;
+        return `<span class="${on ? 'on' : held ? 'held' : ''}"${held ? ` style="color:${hl}"` : ''}>${esc(st.uppercase === false ? w.t : w.t.toUpperCase())}</span>`;
+      }).join(' ');
     } else el.textContent = '';
     video.requestVideoFrameCallback ? video.requestVideoFrameCallback(step) : requestAnimationFrame(step);
   };
@@ -2283,7 +2101,8 @@ function openEdit(p, c, tab = 'trim') {
   };
   refreshLiveOverlay = () => {
     if (!liveOn() || !wordsArr.length) return;
-    const st = { ...(STYLES.base || {}), ...(STYLES.presets?.[$('.stylePreset', m)?.value] || {}) };
+    const st = { ...(STYLES.base || {}), ...(STYLES.presets?.[$('.stylePreset', m)?.value] || {}),
+                 ...collectOverrides(m) };
     mountLiveCaptions(v, wordsArr, st, 0);
   };
   async function loadWords() {
@@ -2387,7 +2206,6 @@ function openExport(pid, ranks, batch) {
       <div class="field"><span class="fl">Caption style</span><div style="display:flex;gap:8px"><select id="ex-style" class="txt" style="flex:1">${styleOpts}</select><button class="btn sm" id="ex-edtext">Edit text…</button></div></div>
       <div class="field full" id="ex-wordsWrap" hidden><div class="words" id="ex-words"><span class="note">Loading…</span></div></div>
       <div class="field" style="grid-column:1/-1"><span class="fl">Framing</span><div class="seg" id="ex-frame"><button type="button" class="on" data-v="auto">Auto</button><button type="button" data-v="crop">Center crop</button><button type="button" data-v="blur_fit">Blur fill</button></div></div>
-      <div class="field"><div class="exrow"><span class="tl" style="flex:1">Watermark<small>None</small></span><label class="tog"><input type="checkbox" disabled><span class="knob"></span></label></div></div>
       ${batch ? `<div class="field full"><div class="exrow"><span class="tl" style="flex:1">Apply to all clips<small>Off = each clip keeps its own style</small></span><label class="tog"><input type="checkbox" id="ex-all" checked><span class="knob"></span></label></div></div>` : ''}
     </div>
     <div class="exsum" id="ex-sum" style="margin-top:10px"></div>
@@ -2449,9 +2267,7 @@ function openExport(pid, ranks, batch) {
     } catch (e) { note.textContent = e.message; btn.disabled = false; return; }
     const poll = setInterval(async () => {
       try {
-        const st = batch
-          ? await api(`/api/projects/${pid}/exports/${job}`)
-          : await api(`/api/projects/${pid}/exports/${job}`);
+        const st = await api(`/api/projects/${pid}/exports/${job}`);
         const pct = Math.round((st.progress || 0) * 100);
         $('i', bar).style.width = pct + '%';
         note.textContent = st.state === 'running' ? `Exporting… ${pct}%` : st.state;
@@ -2616,11 +2432,12 @@ function paintShots(c) {
   const box = $('#edx-shots'); if (!box) return;
   const shots = c.shots || [];
   box.innerHTML = shots.length ? shots.map((s, i) =>
-    `<span class="shot">#${i + 1} ${fmtT(s.start)}–${fmtT(s.end)} · ${esc(s.layout || 'auto')}</span>`).join('')
+    `<span class="shot${(s.active || []).length ? ' focus' : ''}" title="${(s.active || []).length ? 'Active-speaker focus: the view pushes in on whoever is talking' : ''}">#${i + 1} ${fmtT(s.start)}–${fmtT(s.end)} · ${esc(s.layout || 'auto')}${(s.active || []).length ? ' · speaker focus' : ''}</span>`).join('')
     : '<span class="hint">No shot data. Layout is automatic.</span>';
 }
 function edxStyle() {
-  return { ...(STYLES.base || {}), ...(STYLES.presets?.[$('#edx-preset')?.value] || {}) };
+  return { ...(STYLES.base || {}), ...(STYLES.presets?.[$('#edx-preset')?.value] || {}),
+           ...collectOverrides($('.edside')) };
 }
 function edxOverlay() {
   const v = $('#edx-v'); if (!v || !Edits.words.length) return;
@@ -2820,7 +2637,7 @@ function viewSettings() {
         <div class="card-head"><h3>Appearance &amp; alerts</h3></div>
         <div class="form">
           <div class="field"><span class="fl">Theme</span><div class="seg" id="themeSeg"><button type="button" data-t="dark">Dark</button><button type="button" data-t="light">Light</button><button type="button" data-t="system">System</button></div></div>
-          <div class="field"><span class="fl">Accent</span><div class="seg grid2" id="accentSeg"><button type="button" data-a="graphite">Graphite</button><button type="button" data-a="blue">Blue</button><button type="button" data-a="green">Green</button><button type="button" data-a="orange">Orange</button></div></div>
+          <div class="field"><span class="fl">Accent</span><div class="seg grid2" id="accentSeg"><button type="button" data-a="violet">Violet</button><button type="button" data-a="graphite">Graphite</button><button type="button" data-a="blue">Blue</button><button type="button" data-a="green">Green</button><button type="button" data-a="orange">Orange</button></div></div>
           <div class="field"><span class="fl">Caption pace</span><div class="seg tight" id="paceSeg"><button type="button" data-p="0.28">Relaxed</button><button type="button" data-p="0.22">Normal</button><button type="button" data-p="0.16">Snappy</button></div></div>
           <div class="field">
             <span class="fl">Alerts</span>
@@ -2940,7 +2757,6 @@ const actions = {
     v.addEventListener('loadedmetadata', () => { v.currentTime = t; if (was) v.play().catch(() => {}); }, { once: true });
   },
   'copy-title'(b) { copyText(clipOf(b).c.title, 'Title copied'); const m = b.closest('details'); if (m) m.removeAttribute('open'); },
-  'copy-tags'(b) { copyText(clipOf(b).c.hashtags.map(t => '#' + t).join(' '), 'Hashtags copied'); const m = b.closest('details'); if (m) m.removeAttribute('open'); },
   'export-clip'(b) { const { p, c } = clipOf(b); openExport(p.id, [c.rank], false); },
   'download-clip'(b) { const { p, c, el } = clipOf(b); downloadClip(p.id, el?.dataset.plat || c.platforms[0], c); },
   'lock-proj'(b) { toggleLock(b.dataset.id); },
