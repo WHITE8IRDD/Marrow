@@ -45,8 +45,26 @@ const { window } = dom;
 window.fetch = () => new Promise(() => {});            // never resolves: we never need the API
 window.EventSource = class { addEventListener() {} close() {} };
 window.matchMedia = q => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
-window.HTMLMediaElement.prototype.play = () => Promise.resolve();
-window.HTMLMediaElement.prototype.pause = () => {};
+/* Two previews must never fight: these hooks let us assert who is playing. */
+const plays = { home: 0, modal: 0 }, pauses = { home: 0, modal: 0 };
+window.HTMLMediaElement.prototype.play = function () {
+  if (this.id === 'homePrev' || this.id === 'homePrevBg') plays.home++;
+  if (this.id === 'modalPrev' || this.id === 'modalPrevBg') plays.modal++;
+  return Promise.resolve();
+};
+window.HTMLMediaElement.prototype.pause = function () {
+  if (this.id === 'homePrev' || this.id === 'homePrevBg') pauses.home++;
+  if (this.id === 'modalPrev' || this.id === 'modalPrevBg') pauses.modal++;
+};
+
+/* jsdom has no IntersectionObserver; record observers so the checks can drive them. */
+const observers = [];
+window.IntersectionObserver = class {
+  constructor(cb, opts) { this.cb = cb; this.opts = opts; this.elements = []; observers.push(this); }
+  observe(el) { this.elements.push(el); }
+  unobserve() {}
+  disconnect() {}
+};
 
 const failures = [];
 const check = (name, ok, detail = '') => {
@@ -57,7 +75,8 @@ const check = (name, ok, detail = '') => {
 const boot = window.document.createElement('script');
 boot.textContent = `try {
 ${js}
-window.__api = { optsPanel, readOpts, modeOf, speakerModeHTML, updateHomePreview };
+window.__api = { optsPanel, readOpts, modeOf, speakerModeHTML, updateHomePreview,
+      setPreviewMedia, openPreviewModal, closeModal, watchCardVisibility, watchPreviewVisibility };
 } catch (err) { window.__err = err && (err.stack || String(err)); }`;
 window.document.head.appendChild(boot);
 check('app.js loads without throwing', !window.__err, window.__err || '');
@@ -101,6 +120,74 @@ check('clicking Force two-up posts it', api.readOpts(host).split_screen === 'two
 check('clicking updates the card copy',
   host.querySelector('.speaker-mode').dataset.mode === 'two_up'
   && /Force two-up/.test(host.querySelector('.speaker-mode .tl b').textContent));
+
+/* ---------- preview media: lazy, offscreen-aware, one playing copy ---------- */
+const ioFor = el => observers.find(o => o.elements.includes(el));
+const intersect = (el, isIntersecting) => {
+  const o = ioFor(el);
+  o.cb([{ target: el, isIntersecting }], o);
+};
+
+const markup = window.document.createElement('div');
+markup.innerHTML = `
+  <div class="phone preview-phone" id="homePhone">
+    <video id="homePrevBg" class="prev-bg" muted playsinline loop preload="metadata"></video>
+    <video id="homePrev" class="prev-fg" muted playsinline loop preload="metadata"></video>
+    <div class="phone-placeholder" id="homePrevPlaceholder"></div>
+  </div><div id="optbox"></div><div id="modal-root"></div>`;
+window.document.body.appendChild(markup);
+const phone = window.document.getElementById('homePhone');
+const hp = window.document.getElementById('homePrev');
+const hpb = window.document.getElementById('homePrevBg');
+check('previews are marked preload=metadata', hp.preload === 'metadata' && hpb.preload === 'metadata');
+
+let hpPlaying = false;                       // jsdom does not run real playback
+Object.defineProperty(hp, 'paused', { get: () => !hpPlaying, configurable: true });
+
+api.setPreviewMedia('/api/projects/x/proxy');
+check('attaching a preview promotes it to preload=auto',
+  hp.preload === 'auto' && hp.getAttribute('src') === '/api/projects/x/proxy');
+check('the backdrop shares that one source', hpb.getAttribute('src') === '/api/projects/x/proxy');
+check('an observer watches the preview phone', !!ioFor(phone));
+
+hpPlaying = true;
+const homePauses0 = pauses.home;
+intersect(phone, false);
+check('scrolling the preview away pauses both layers', pauses.home === homePauses0 + 2,
+  `${pauses.home - homePauses0} pause(s)`);
+const homePlaysResume = plays.home;
+intersect(phone, true);
+check('scrolling back resumes it', plays.home > homePlaysResume);
+
+hpPlaying = true;
+hp.currentTime = 12.5;
+hp.muted = false;                                  // the user had unmuted Home
+const homePausesBeforeOpen = pauses.home;
+api.openPreviewModal();
+const modalVid = window.document.getElementById('modalPrev');
+check('expanded preview pauses the Home copy (only one copy runs)',
+  pauses.home === homePausesBeforeOpen + 2, `${pauses.home - homePausesBeforeOpen} pause(s)`);
+check('expanded preview starts where Home was',
+  !!modalVid && Math.abs(modalVid.currentTime - 12.5) < 0.001, `got ${modalVid && modalVid.currentTime}`);
+check('the expanded copy inherits the mute state and is the audible one',
+  !!modalVid && modalVid.muted === false && hp.muted === false);
+
+const modalPlays1 = plays.modal, homePlays1 = plays.home;
+api.closeModal();
+check('closing hands playback back to Home', plays.home > homePlays1 && plays.modal === modalPlays1);
+
+const card = window.document.createElement('div');
+card.className = 'clip';
+card.innerHTML = '<video muted preload="none"></video>';
+window.document.body.appendChild(card);
+api.watchCardVisibility(card);
+const cardVideo = card.querySelector('video');
+let cardPlaying = true;
+Object.defineProperty(cardVideo, 'paused', { get: () => !cardPlaying, configurable: true });
+const cardPauses = [];
+cardVideo.pause = () => { cardPauses.push(1); cardPlaying = false; };
+intersect(card, false);
+check('an offscreen clip card stops playing', cardPauses.length === 1);
 
 console.log(failures.length ? `\n${failures.length} check(s) failed` : '\nall UI checks passed');
 process.exit(failures.length ? 1 : 0);

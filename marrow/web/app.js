@@ -175,20 +175,23 @@ function closeModal() {
   const r = $('#modal-root');
   const mv = $('#modalPrev', r);
   const hp = $('#homePrev');
+  const wasOpen = !!r.querySelector('.prev-modal-wrap');
+  const modalWasPlaying = !!(wasOpen && mv && !mv.paused);   // read before pausing
+  // Tear the expanded copy down *first*: exactly one of the two previews may be
+  // playing (and audible) at any moment, including across this swap.
+  $$('video', r).forEach(v => v.pause());
   if (mv && hp) {
     try {
       hp.currentTime = mv.currentTime;
       const bg = $('#homePrevBg');
       if (bg) bg.currentTime = mv.currentTime;
-      if (!mv.paused) {
+      if (modalWasPlaying || homeWasPlaying) {
         hp.play().catch(() => {});
         bg?.play().catch(() => {});
         updatePlayButtonIcons(false);
       }
     } catch (_) {}
   }
-  const v = $('video', r);
-  if (v) v.pause();
   r.innerHTML = '';
   editCtx = null;
   refreshLiveOverlay = null;
@@ -344,8 +347,8 @@ function styleSectionHTML(preset) {
       <aside class="home-style-preview" aria-label="Caption preview">
         <div class="home-preview-heading"><div><span class="home-mini-label">LIVE PREVIEW</span><p>On your source footage</p></div><span class="home-preview-format">9:16</span></div>
         <div class="phone preview-phone layout-crop" id="homePhone" role="region" aria-label="Real-time video preview">
-          <video id="homePrevBg" class="prev-bg" muted playsinline loop preload="auto"></video>
-          <video id="homePrev" class="prev-fg" muted playsinline loop preload="auto"></video>
+          <video id="homePrevBg" class="prev-bg" muted playsinline loop preload="metadata"></video>
+          <video id="homePrev" class="prev-fg" muted playsinline loop preload="metadata"></video>
           <div class="phone-placeholder" id="homePrevPlaceholder">
             <div class="ph-backdrop"><div class="ph-glow"></div><div class="ph-grid"></div></div>
             <div class="ph-badge">${ico('sparkle')}<span>Live Preview</span></div>
@@ -752,20 +755,64 @@ function setPreviewMedia(url) {
   const bg = document.getElementById('homePrevBg');
   const ph = document.getElementById('homePrevPlaceholder');
   const note = document.getElementById('homePrevNote');
-  
-  if (fg) {
-    fg.src = url;
-    fg.currentTime = 0;
-    fg.play().catch(() => {});
-  }
-  if (bg) {
-    bg.src = url;
-    bg.currentTime = 0;
-    bg.play().catch(() => {});
+
+  // The two layers share one file; the backdrop only starts fetching once the
+  // foreground can actually play, so opening Home does not pull two streams.
+  for (const v of [fg, bg]) {
+    if (!v) continue;
+    v.preload = 'auto';
+    v.src = url;
+    try { v.currentTime = 0; } catch (_) {}
+    v.play().catch(() => {});
   }
   if (ph) ph.classList.add('hidden');
   if (note) note.hidden = true;
+  watchPreviewVisibility();
   updateHomePreview();
+}
+
+/* Previews only decode while they are on screen: the Home phone pauses when it
+   scrolls out of view and resumes when it comes back (unless the expanded
+   preview is open, which owns playback then). Clip cards do the same for any
+   card that leaves the viewport mid-hover. */
+let homeWasPlaying = false;
+function watchPreviewVisibility() {
+  const phone = document.getElementById('homePhone');
+  if (!phone || typeof IntersectionObserver !== 'function') return;
+  if (phone.dataset.prevIO === '1') return;
+  phone.dataset.prevIO = '1';
+  const io = new IntersectionObserver(entries => {
+    for (const en of entries) {
+      const fg = document.getElementById('homePrev');
+      const bg = document.getElementById('homePrevBg');
+      if (!fg) continue;
+      if (en.isIntersecting) {
+        if (homeWasPlaying && !document.getElementById('modalPrev')) {
+          fg.play().catch(() => {});
+          bg?.play().catch(() => {});
+          updatePlayButtonIcons(false);
+        }
+      } else {
+        homeWasPlaying = !fg.paused;
+        fg.pause();
+        bg?.pause();
+        updatePlayButtonIcons(true);
+      }
+    }
+  }, { threshold: 0.15 });
+  io.observe(phone);
+}
+const cardObserver = (typeof IntersectionObserver === 'function')
+  ? new IntersectionObserver(entries => {
+      for (const en of entries) {
+        if (en.isIntersecting) continue;
+        const v = en.target.querySelector('video');
+        if (v && !v.paused) { v.pause(); try { v.currentTime = 0; } catch (_) {} }
+      }
+    }, { threshold: 0.05 })
+  : null;
+function watchCardVisibility(el) {
+  if (cardObserver && el) cardObserver.observe(el);
 }
 
 function clearPreviewMedia() {
@@ -890,8 +937,8 @@ function openPreviewModal() {
     <div class="prev-modal-body">
       <div class="prev-modal-stage" id="modalStage">
         <div class="phone prev-modal-phone ${isBlurFit ? 'layout-blur_fit' : 'layout-crop'} ${hasZoom ? 'has-zoom' : ''}" id="modalPhone">
-          <video id="modalPrevBg" class="prev-bg" muted playsinline loop preload="auto"></video>
-          <video id="modalPrev" class="prev-fg" playsinline loop preload="auto"></video>
+          <video id="modalPrevBg" class="prev-bg" muted playsinline loop preload="metadata"></video>
+          <video id="modalPrev" class="prev-fg" playsinline loop preload="metadata"></video>
           <div class="phone-placeholder ${src ? 'hidden' : ''}" id="modalPlaceholder">
             <div class="ph-backdrop"><div class="ph-glow"></div><div class="ph-grid"></div></div>
             <div class="ph-badge">${ico('sparkle')}<span>Live Preview</span></div>
@@ -918,6 +965,15 @@ function openPreviewModal() {
   const mvb = $('#modalPrevBg', m);
   
   if (src && mv && mvb) {
+    // Park the Home preview first (its position is handed to the modal below):
+    // between them only the expanded view decodes and only one of them makes
+    // sound. closeModal() gives the time and the playing state back.
+    const homeBg = document.getElementById('homePrevBg');
+    homeWasPlaying = !!(hp && !hp.paused);
+    if (hp) hp.pause();
+    if (homeBg) homeBg.pause();
+    mv.preload = 'auto';
+    mvb.preload = 'auto';
     mv.src = src;
     mvb.src = src;
     const curTime = hp ? hp.currentTime : 0;
@@ -1760,7 +1816,7 @@ function viewProject() {
       <section class="card scan" id="scan" data-state="idle" hidden>
         <header class="scan-head"><span class="scan-title">${ico('sparkle')}<b>Live analysis</b></span><span class="pill" id="scanPill">Idle</span></header>
         <div class="scan-stage">
-          <video id="scanVideo" muted playsinline preload="auto"></video>
+          <video id="scanVideo" muted playsinline preload="metadata"></video>
           <div class="scan-grid"></div><div class="scan-sweep"></div>
           <div class="scan-top"><span class="scan-chip label" id="scanLabel">Scanning content</span><span class="scan-chip live"><i></i>Live</span></div>
           <div class="scan-bottom">
@@ -1881,6 +1937,7 @@ function paintProject(p, force) {
       const old = have.get(String(c.rank));
       if (old && old.dataset.sig === sig) return;
       const eln = cardEl(p, c, sig);
+      watchCardVisibility(eln);
       if (old) old.replaceWith(eln); else grid.appendChild(eln);
     });
     const waiting = grid.querySelector('.waiting'); if (waiting) waiting.remove();

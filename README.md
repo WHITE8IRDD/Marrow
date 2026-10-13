@@ -118,6 +118,15 @@ A forced two-up clip renders in a single pass when every shot is frame-view
 stacked (no per-shot segments, no concat step); segment rendering is only used
 when the panel geometry actually changes inside a clip.
 
+**Previews stay cheap.** The Home preview and the expanded Preview Inspector
+share one source (the backdrop layer is muted and mirrors the foreground, never a
+second file). Both start at `preload="metadata"` and only start fetching when they
+actually play; the Home phone pauses when it scrolls out of view and resumes when
+it comes back, clip cards stop decoding the moment they leave the viewport, and
+opening the expanded preview parks the Home copy first — its position and mute
+state are handed over, and handed back on close — so exactly one copy is ever
+playing (or audible). `node scripts/ui_check.mjs` asserts all of this in a DOM.
+
 Checks: `python -m pytest -q` runs the suite (Python tests that need FFmpeg skip
 themselves when it is missing). `node scripts/ui_check.mjs` loads the real
 `index.html` + `app.js` in jsdom and clicks the Home framing control — it needs
