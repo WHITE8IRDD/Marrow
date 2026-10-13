@@ -131,9 +131,10 @@ def test_two_up_stacks_even_when_faces_never_coexist(monkeypatch, tmp_path):
 
 
 def test_two_up_without_face_detection_uses_two_frame_views(monkeypatch, tmp_path):
+    """No detector *and* nothing readable: the frame's own halves, as before."""
     monkeypatch.setattr(L, "get_detector", lambda: None)
     shots = L.analyze("nonexistent.mp4", 0.0, 8.0, speaker_mode="two_up")
-    assert shots == [{"start": 0.0, "end": 8.0, "layout": "stacked",
+    assert shots == [{"start": 0.0, "end": 8.0, "layout": "stacked", "faces": 0,
                       "views": "frame", "mode": "two_up"}]
     # auto/off keep the configured fallback instead
     assert L.analyze("nonexistent.mp4", 0.0, 8.0, speaker_mode="auto",
@@ -143,7 +144,11 @@ def test_two_up_without_face_detection_uses_two_frame_views(monkeypatch, tmp_pat
 
 
 def test_single_face_is_never_duplicated_into_two_panels(monkeypatch, tmp_path):
-    """One head detected twice (a mirror or a duplicate box) is still one speaker."""
+    """One head detected twice (a mirror or a duplicate box) is still one speaker.
+
+    The face may anchor one panel — that is what keeps it centred — but the other
+    panel comes from the frame's own pixels, never from the same head again.
+    """
     times = [i * 0.5 for i in range(10)]
     _two_face_stubs(monkeypatch, times,
                     lambda f, d: [(200, 60, 90, 90, 0.9), (215, 70, 88, 88, 0.88)])
@@ -151,8 +156,13 @@ def test_single_face_is_never_duplicated_into_two_panels(monkeypatch, tmp_path):
     assert auto["layout"] != "stacked" and "panels" not in auto
     two = L.analyze("nonexistent.mp4", 0.0, 5.0, workdir=tmp_path, speaker_mode="two_up")[0]
     assert two["layout"] == "stacked"
-    assert two["views"] == "frame"            # frame halves, not the same face twice
-    assert "panels" not in two
+    assert two["views"] in ("frame", "subject")     # never "faces"
+    if two["views"] == "subject":
+        panels = two["panels"]
+        assert len(panels) == 2 and panels[0] != panels[1]
+        # exactly one panel is built around the detected face
+        centred = [p for p in panels if abs(p["x"] + p["w"] / 2 - 200) <= 1]
+        assert len(centred) <= 1
 
 
 def test_three_speakers_pick_two_distinct_views(monkeypatch, tmp_path):
@@ -389,14 +399,19 @@ def test_regeneration_path_forwards_the_mode(monkeypatch, tmp_path):
 
 
 def test_pipeline_threads_the_mode_into_every_clip(monkeypatch, tmp_path):
-    """The processing path: selected mode -> analyse(scan_src=proxy) -> graph."""
+    """The processing path: selected mode -> analyse(scan_src=proxy) -> graph.
+
+    The source is a still frame (nothing moves, so no subject can be located
+    either): the clip must still come out as a stacked two-up, rendered in a
+    single pass from the frame's own halves.
+    """
     import numpy as np
 
     import marrow.pipeline as P
     from marrow.config import load_config
 
     src_video = tmp_path / "talk.mp4"
-    studio.run_ffmpeg(["-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=9",
+    studio.run_ffmpeg(["-f", "lavfi", "-i", "color=c=0x202020:s=640x360:r=30:d=9",
                        "-f", "lavfi", "-i", "sine=frequency=440:duration=9",
                        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
                        "-c:a", "aac", "-shortest", src_video])

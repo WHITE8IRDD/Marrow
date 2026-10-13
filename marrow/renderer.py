@@ -105,12 +105,14 @@ def build_filter_graph(layout, rx, ry, fps, zoom, ass_name=None, shot=None):
     """Build the -filter_complex string. The final labeled output is [v].
 
     shot: optional per-shot geometry. Two stacked variants exist:
-    * ``panels`` present -> one crop per face-derived panel (auto two-shot or
-      forced two-up on real faces; also the active-speaker push-ins).
+    * ``panels`` present -> one crop per subject-anchored panel (auto two-shot,
+      forced two-up, and the active-speaker push-ins). Layout analysis centres
+      each panel on its own subject, so the crop coordinates are used as given.
     * no ``panels`` (``views: "frame"``, or a manual stacked override) -> the
       frame's own two side-by-side views are cropped and stacked. This is the
-      forced two-up path that works with no face data at all; it never shows the
-      same speaker twice because each panel is a different half of the frame.
+      last-resort two-up path, used when nothing could be measured at all; it
+      never shows the same speaker twice because each panel is a different half
+      of the frame.
     """
     ratio = rx / ry
     if layout == "face" and not (shot and shot.get("cw")):

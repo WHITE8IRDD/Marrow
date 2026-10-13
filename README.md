@@ -53,7 +53,7 @@ export dialog:
 | Mode | What it does |
 |---|---|
 | **Auto** (default) | Stacked top/bottom panels only for *verified* two-shots: two different faces that are genuinely on screen at the same time, with captions on the seam. Shot/reverse-shot edits stay solo, so one speaker is never shown twice. |
-| **Force two-up** | Always two panels. With two distinct faces it crops one panel per person; with only one face (or none) it crops **the frame's own left and right halves** and stacks them — it never duplicates a speaker to fill a panel. Works even when face detection is unavailable. |
+| **Force two-up** | Always two panels, one per speaker, each **centred on its own subject**. Two detected faces are used when they exist; a speaker the detector missed is anchored on the face the tracker only half-trusted, then on what *moves* in that part of the frame, then on where the picture's detail is. Nothing is ever anchored on a fixed quarter of the frame, and one person is never used for both panels. |
 | **Off** | Never stack. Every shot uses the configured fallback framing (center crop / blur fit). |
 
 With three or more people on screen, Auto and Force two-up pick the best *distinct*
@@ -61,6 +61,16 @@ pair — preferring faces that are on screen together, then the most persistent,
 the largest, then the left-most — and merge duplicate detections of the same person
 (overlapping boxes) instead of repeating a face. Mouth-motion analysis decides who
 is talking, so a panel only pushes in on the speaker being heard.
+
+**Speaker centring.** A panel is a head-and-shoulders crop whose centre *is* its
+speaker: the crop is narrowed for a close pair so the other speaker stays out of
+the panel, and narrowed again — never shifted — when a speaker sits near the
+source edge, where clamping a fixed-width crop is what used to push people to the
+side of their half. Two speakers who sit shoulder to shoulder are still two
+panels. Panel geometry is stored per shot (`shots[].panels`), and
+`shots[].views` says where it came from: `faces` (two detections), `subject`
+(motion/detail fallback) or `frame` (the frame's own halves — the only case where
+nothing could be measured, e.g. a completely static shot).
 
 `render.split_screen: true|false` (the older boolean) still works and means
 Auto / Off; `render.speaker_mode` wins when both are present. Projects, job
@@ -106,6 +116,7 @@ Measured in a 2-core Linux sandbox (FFmpeg 7.0.2, x264 `veryfast`; synthetic
 | Frame sampling, 2.5 fps | 1.82 s (`read()`) | 1.37 s (`grab()` + `retrieve()`) | decoding is unavoidable; converting every skipped frame to BGR is not (1.4× on the proxy too) |
 | 5 clip preview tiles | 1.32 s from the 1080p source | 0.24 s from the 480p proxy | tiles are 270×480, so decoding full resolution for them is wasted work (2.9–5.4× across runs) |
 | Repeated duration probes | ~60 ms each | ~0 ms | `probe_duration` memoises per (path, size, mtime) |
+| Two-up speaker anchoring | — | +0.1 s per 6 s of clip | the motion/detail fallback only runs for shots where the detector did not find both speakers, and it reuses the frames already sampled for face detection |
 
 Rendering is encode-bound, not process-bound: on the same box an 8 s 1080×1920
 clip takes ~4.3 s of wall clock, and swapping the scaler from `lanczos` to

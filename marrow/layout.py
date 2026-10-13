@@ -9,10 +9,13 @@ Multi-speaker framing is chosen by ``speaker_mode``:
 ``auto``    stack a shot only when two *different* faces are genuinely visible
             together (they must coexist in most sampled frames). Footage cut as
             shot/reverse-shot therefore never duplicates one speaker.
-``two_up``  force top/bottom panels for every shot. Panels come from two
-            distinct co-present faces when they exist; otherwise the frame's own
-            two side-by-side views are cropped and stacked, so this works even
-            when face detection is unavailable. One face is never shown twice.
+``two_up``  force top/bottom panels for every shot. Each panel is anchored on
+            its own subject — a detected face when there is one, otherwise the
+            part of the frame that *moves* there, then the part with picture
+            detail — so the two speakers sit in the middle of their panels at
+            any spacing, from shoulder to shoulder to opposite edges. Only when
+            nothing at all can be measured does it fall back to the frame's own
+            left/right views. One person is never used for both panels.
 ``off``     never stack; every shot uses the fallback crop/blur_fit or a
             face-tracked crop.
 
@@ -47,9 +50,31 @@ MIN_SCORE = 0.6
 PERSIST_FRAC = 0.60
 SPLIT_PERSIST_FRAC = 0.25  # forced two-up also accepts a face seen in ~1/4 of a shot
 SEPARATION = 0.20      # face-center distance (fraction of width) for "two people"
+SPLIT_SEPARATION = 0.10  # forced two-up: closer than this and it is one person twice
 MIN_COEXISTENCE = 0.50 # both faces must be visible in the same frame for half the samples
 MIN_STACK_SECONDS = 2.5 # skip fleeting detections and shot/reverse-shot transitions
-CACHE_VERSION = 5
+CACHE_VERSION = 6
+
+# ---------------------------------------------------------------- panel framing
+# How each half of a stacked two-up is framed. The goal is that the person a
+# panel belongs to sits in the middle of that panel, at a sane size, with the
+# other speaker out of the way -- so the crop is anchored on the *person*, never
+# on a fixed quarter of the frame.
+PANEL_TIGHTNESS = 0.92   # tallest crop that still fits the source (fraction of H)
+FACE_FILL = 3.0          # panel width as a multiple of face width (head + shoulders)
+NEIGHBOUR_KEEP_OUT = 1.25  # panel width <= gap x this: the other speaker stays outside
+MIN_PANEL_FRACTION = 0.14  # never crop narrower than this fraction of the source width
+PANEL_HEADROOM = 0.40    # face centre sits this far down the crop
+# A half with no detected face is still framed on its subject when something
+# there moves: a talking head, hands and a shifting weight move every second,
+# walls, posters and light stands do not. This is what keeps a listener who
+# turned away (the face a detector misses) centred instead of pushed aside.
+MOTION_FLOOR = 0.0028    # mean per-pixel change (0..1) that counts as movement
+DETAIL_FLOOR = 0.055     # edge energy fallback when the subject is standing still
+MOTION_MIN_WIDTH = 0.06  # narrowest subject motion may stand in for (fraction of width)
+MOTION_HEAD_RATIO = 1.7  # measured: a talking head moves across ~1.7x its face width
+MOTION_MAX_FACE = 0.20   # widest face a motion blob is allowed to imply
+LOOSE_PERSIST = 2        # a face seen in this many samples may anchor a panel
 # Duplicate detections of the *same* face (a mirror, or two boxes on one head) are
 # merged, so a single speaker can never fill both panels.
 DUPLICATE_CENTRE = 0.35  # centre distance below this fraction of the face width = same face
@@ -455,18 +480,21 @@ def distinct_faces(faces, frame_w):
     return kept
 
 
-def _select_split_pair(faces, frame_w, sample_count, min_coexistence=MIN_COEXISTENCE):
+def _select_split_pair(faces, frame_w, sample_count, min_coexistence=MIN_COEXISTENCE,
+                       min_sep=SEPARATION):
     """Best persistent, well-separated pair of *distinct* faces.
 
     Scoring: genuine co-presence first, then how often both were on screen, then
     the pair's size, then the left-most pair — deterministic for 3+ speakers.
     ``min_coexistence=0`` is used by the forced two-up mode, which accepts any
-    two distinct faces but still prefers the ones that share the screen.
+    two distinct faces but still prefers the ones that share the screen; that
+    mode also lowers ``min_sep``, because two speakers who sit shoulder to
+    shoulder are still two panels (each cropped tight on its own person).
     """
     best, best_score = None, None
     for i, a in enumerate(faces):
         for b in faces[i + 1:]:
-            if math.hypot(a[0] - b[0], a[1] - b[1]) < SEPARATION * frame_w:
+            if math.hypot(a[0] - b[0], a[1] - b[1]) < min_sep * frame_w:
                 continue
             together = _coexistence(a[3], b[3], sample_count)
             if together < min_coexistence:
@@ -547,25 +575,51 @@ def speaker_activity(frames, tracks, rms=None, energy_fps=ENERGY_FPS):
 
 
 def _panels(faces, W, H):
-    """Two 9:8 crops centered on each participant, source-left/top first.
+    """Two 9:8 crops, one anchored on each subject, source-left/top first.
 
-    A fixed-width crop cannot be centered on a face close to the source edge:
-    clamping its x coordinate to the frame pushes that face toward the side of
-    its output panel. Reduce only the crop that needs it so its center stays on
-    the face while the crop remains inside the source frame.
+    Each panel is centred on the person it belongs to (subject centre = crop
+    centre, within the even-pixel rounding yuv420p needs), never on a fixed
+    quarter of the frame. Three rules keep that framing usable:
+
+    * **Fit the pair.** A close pair gets a tighter crop — the panel is a
+      head-and-shoulders shot of its own speaker, wide enough that the person
+      is not cropped to a nose, narrow enough that the *other* speaker
+      (``NEIGHBOUR_KEEP_OUT``) stays outside the panel.
+    * **Fit the source.** A fixed-width crop cannot be centred on a subject
+      close to the source edge: clamping its x coordinate to the frame pushes
+      that person toward the side of the panel. Only the crop that needs it is
+      narrowed, so its centre stays on the subject inside the source frame.
+    * **Fit the vertical.** The subject's face sits ``PANEL_HEADROOM`` down the
+      crop, which keeps a natural amount of headroom instead of a chin on the
+      bottom edge.
+
+    ``faces`` are ``(cx, cy, w, track)`` tuples in source pixels; the first two
+    are used, ordered left-to-right (top-to-bottom for a vertical two-shot).
     """
     ordered = _panel_order(faces[:2], W)
+    # The widest crop that fits the source height still leaves a little air.
+    widest = min(float(W), float(H) * 9.0 / 8.0) * PANEL_TIGHTNESS
+    # Only a side-by-side pair can be kept out by narrowing the crop; two people
+    # stacked one above the other (a vertical two-shot) are separated along the
+    # other axis, so they keep the wide crop and are topped/bottomed by y.
+    side_by_side = False
+    if len(ordered) > 1:
+        side_by_side = abs(ordered[0][0] - ordered[1][0]) >= abs(ordered[0][1] - ordered[1][1])
+    gap = abs(ordered[0][0] - ordered[1][0]) if side_by_side else None
     panels = []
-    for cx, cy, w, _h in ordered:
-        # Keep the existing face-relative framing, but leave room to form a 9:8
-        # crop within the source dimensions before applying the edge constraint.
-        cw = min(float(W), max(w * 4.0, W * 0.45), float(H) * 9.0 / 8.0)
+    for cx, cy, w, _track in ordered:
+        cw = float(widest)
+        if gap:                                  # close pair: keep the neighbour out
+            cw = min(cw, max(float(w) * FACE_FILL, gap * NEIGHBOUR_KEEP_OUT))
+        cw = max(cw, min(float(W), float(H) * 9.0 / 8.0) * MIN_PANEL_FRACTION)
         face_cx = float(cx)
         if 0.0 <= face_cx <= W:
-            # When a face is close to either side, shrink its crop just enough
-            # to keep the face center aligned instead of clamping the crop.
-            max_centered_width = 2.0 * min(face_cx, W - face_cx)
-            cw = min(cw, max_centered_width)
+            # When a subject is close to either side, shrink its crop just enough
+            # to keep the subject centre aligned instead of clamping the crop.
+            # Stop shrinking at MIN_PANEL_FRACTION so a cornered speaker is a
+            # tight close-up rather than a 5x blow-up of a few pixels.
+            floor = max(float(w) * 2.4, float(W) * MIN_PANEL_FRACTION, 2.0)
+            cw = max(min(cw, 2.0 * min(face_cx, W - face_cx)), min(cw, floor))
         else:
             # Face boxes should be inside the frame. Be defensive with stale or
             # malformed analysis data: preserve a valid crop at the nearest edge.
@@ -573,24 +627,201 @@ def _panels(faces, W, H):
 
         cw = max(2, int(cw) // 2 * 2)
         ch = max(2, min(H - H % 2, int(round(cw * 8.0 / 9.0)) // 2 * 2))
-        # Recompute from the quantized crop dimensions; x is then centered on
-        # the detected face to within one pixel (required even by yuv420p).
+        cw = max(2, int(round(ch * 9.0 / 8.0)) // 2 * 2)   # re-fit width to the final height
+        # Recompute from the quantized crop dimensions; x is then centred on
+        # the detected subject to within one pixel (required even by yuv420p).
         x = int(round(face_cx - cw / 2.0))
         x = min(max(x, 0), max(0, W - cw))
-        y = int(min(max(cy - 0.40 * ch, 0.0), max(0.0, H - ch)))
+        y = int(min(max(cy - PANEL_HEADROOM * ch, 0.0), max(0.0, H - ch)))
         x, y = x - (x % 2), y - (y % 2)
         panels.append({"x": x, "y": y, "w": cw, "h": ch})
     while len(panels) < 2:
-        panels.append({"x": 0, "y": 0, "w": W - W % 2, "h": H - H % 2})
+        # Defensive: never reached from ``analyze`` (which always passes two
+        # anchors). Fall back to the frame's own half, which is what the renderer
+        # does when a shot carries no panels at all.
+        half = max(2, (W // 2) // 2 * 2)
+        ch = max(2, min(H - H % 2, int(round(half * 8.0 / 9.0)) // 2 * 2))
+        x = 0 if not panels else max(0, W - half)
+        panels.append({"x": x, "y": max(0, (H - ch) // 2 // 2 * 2), "w": half, "h": ch})
     return panels
 
 
+def _activity_maps(frames, max_width=320):
+    """Small gray proxies of a shot: what moved, and where the detail is.
+
+    Returns ``(motion, detail)`` as 2-D float arrays scaled 0..1, or None when
+    the frames cannot be measured. Motion is the mean absolute difference
+    between consecutive samples (2.5 samples a second, so a talking head, hands
+    and posture read clearly); detail is Sobel edge energy on the middle sample.
+    """
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+    grays = []
+    for entry in frames:
+        frame = entry[1] if isinstance(entry, (tuple, list)) and len(entry) > 1 else entry
+        if frame is None or getattr(frame, "size", 0) == 0 or getattr(frame, "ndim", 0) != 3:
+            continue
+        h, w = frame.shape[:2]
+        if w > max_width:
+            frame = cv2.resize(frame, (max_width, max(2, int(round(h * max_width / w)))),
+                               interpolation=cv2.INTER_AREA)
+        grays.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype("float32"))
+    if len(grays) < 2:
+        return None
+    shape = min((g.shape for g in grays), key=lambda s: s[0] * s[1])
+    grays = [g[:shape[0], :shape[1]] for g in grays]
+    motion = np.zeros(shape, dtype="float32")
+    for a, b in zip(grays, grays[1:]):
+        motion += np.abs(a - b)
+    motion /= float(len(grays) - 1) * 255.0
+    mid = grays[len(grays) // 2]
+    gx = cv2.Sobel(mid, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(mid, cv2.CV_32F, 0, 1, ksize=3)
+    detail = cv2.magnitude(gx, gy) / 1020.0
+    return motion, detail
+
+
+def _smooth_1d(values, width):
+    """Box-smooth a 1-D profile, ignoring masked-out (NaN) columns."""
+    import numpy as np
+
+    values = np.asarray(values, dtype="float32")
+    valid = ~np.isnan(values)
+    filled = np.where(valid, values, 0.0)
+    k = max(3, (int(width) // 24) | 1)
+    kernel = np.ones(k, dtype="float32")
+    total = np.convolve(filled, kernel, mode="same")
+    count = np.convolve(valid.astype("float32"), kernel, mode="same")
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out = np.where(count > 0, total / np.maximum(count, 1e-6), np.nan)
+    return out
+
+
+def subject_columns(frames, W, H, faces=(), loose=(), count=2):
+    """Anchor a panel per subject from the *picture*, for shots the faces missed.
+
+    ``faces`` are the reliable face anchors of this shot (``(cx, cy, w)`` in
+    source pixels, strongest first); ``loose`` are weaker face detections (seen
+    in a couple of samples only), also source pixels. Returns ``[(cx, cy, w)]``
+    ordered strongest-first — one entry when only one subject could be placed —
+    or None when the shot cannot be measured at all.
+
+    The ladder is: a known face, then a face the tracker did not trust, then
+    whatever *moves* in a part of the frame no subject occupies yet (a listener
+    who turned away still moves), then picture detail (a still listener still
+    has edges; a backdrop does not). Each candidate must be far enough from the
+    subjects already placed to be a different person, so one speaker is never
+    cut into two panels — the failure this has to avoid.
+
+    Salience is relative, not absolute: the candidate must stand out from the
+    frame's own median, so a shot where *everything* moves (a pan, a fade, a
+    zoom) yields nothing and the caller can fall back to the frame's own halves.
+    """
+    import numpy as np
+
+    maps = _activity_maps(frames)
+    if maps is None:
+        return None
+    motion, detail = maps
+    height, width = motion.shape
+    scale = width / float(W)                          # source px -> profile px
+
+    anchors = []
+    for face in faces:                                # strongest detection first
+        if len(anchors) >= count:
+            break
+        cx, cy, w = (float(face[0]), float(face[1]), float(face[2]))
+        if all(abs(cx - a[0]) >= SPLIT_SEPARATION * W for a in anchors):
+            anchors.append((cx, cy, w))
+    for extra in loose:                               # weaker detections, best first
+        if len(anchors) >= count:
+            break
+        cx, cy, w = float(extra[0]), float(extra[1]), float(extra[2])
+        limit = SPLIT_SEPARATION * W
+        if all(abs(cx - a[0]) >= limit for a in anchors):
+            anchors.append((cx, cy, w))
+
+    while len(anchors) < count:
+        mask = np.ones(width, dtype=bool)
+        # Every detection claims the width it needs, whether or not it was placed:
+        # two people moving next to each other form one blob, and the blob's
+        # middle is the gap between them, which is nobody.
+        for cx, w in ([(float(a[0]), float(a[2])) for a in anchors] +
+                      [(float(c[0]), float(c[2])) for c in list(faces) + list(loose)]):
+            half = max(2, int(round(max(w * 1.6, MOTION_MIN_WIDTH * W) * scale)))
+            lo, hi = int(round(cx * scale)) - half, int(round(cx * scale)) + half
+            mask[max(0, lo):max(0, hi)] = False
+        if not mask.any():
+            break
+        source, floor = None, None
+        for plane, bar in ((motion, MOTION_FLOOR), (detail, DETAIL_FLOOR)):
+            masked = np.where(mask, plane.mean(axis=0), np.nan)
+            if not np.isfinite(masked).any():
+                continue
+            # Relative bar: the candidate must stand out from the rest of the frame,
+            # so a shot where *everything* moves or is busy yields nothing at all.
+            bar = max(bar, 1.6 * float(np.nanmedian(masked)))
+            if float(np.nanmax(masked)) >= bar:
+                source, floor = plane, bar
+                break
+        if source is None:
+            break
+        band = _smooth_1d(np.where(mask, source.mean(axis=0), np.nan), width)
+        if not np.isfinite(band).any():
+            break
+        at = int(np.nanargmax(band))
+        peak = float(band[at])
+        if peak < floor or peak < 1.25 * float(np.nanmedian(band)):
+            break
+        # The subject is the run of columns around the peak that stays above a
+        # third of it. The centre is the *weighted* centre of that run, not its
+        # midpoint: the profile is not symmetric (a speaker who shifts sideways
+        # moves more at the edge they move toward, and a rigid subject — a hand,
+        # a phone — peaks at its outline rather than in its middle).
+        values = np.nan_to_num(band, nan=0.0)
+        edge = max(peak * 0.3, floor * 0.5)
+        lo = at
+        while lo > 0 and values[lo - 1] >= edge:
+            lo -= 1
+        hi = at
+        while hi + 1 < width and values[hi + 1] >= edge:
+            hi += 1
+        if not mask[at]:
+            break
+        section = values[lo:hi + 1]
+        weights = np.maximum(section, 1e-6)
+        cx = float(np.average(np.arange(lo, hi + 1), weights=weights)) / scale
+        # vertical: the subject's own rows, biased so the head sits high
+        rows = _smooth_1d(source[:, lo:hi + 1].mean(axis=1), height)
+        rows = np.nan_to_num(rows, nan=0.0)
+        if rows.max() > 0:
+            top = int(np.argmax(rows >= 0.5 * float(rows.max())))
+        else:
+            top = 0
+        span = float(max(hi - lo, 1)) / scale
+        cy = (top + 0.30 * max(1, height - top)) * H / float(height)
+        # The blob is wider than the head (hands, torso, the neighbour leaning in),
+        # so it is only used to say where the person is; the panel width comes from
+        # the face width the blob implies.
+        sub_w = min(max(span / MOTION_HEAD_RATIO, MOTION_MIN_WIDTH * W), MOTION_MAX_FACE * W)
+        if all(abs(cx - a[0]) >= SPLIT_SEPARATION * W for a in anchors):
+            anchors.append((float(cx), float(min(max(cy, 0.05 * H), 0.95 * H)), float(sub_w)))
+            continue
+        break
+    return anchors or None
+
+
 def _fallback_shots(start, end, fallback, mode):
-    """What to return when face detection is unavailable.
+    """What to return when the face detector itself is unavailable.
 
     Forced two-up still needs two panels, so it returns a frame-view stacked shot
     for the whole range: the renderer crops the frame's left and right views and
-    stacks them. Every other mode uses the configured fallback layout.
+    stacks them. This is the only two-up path that cannot centre anything — every
+    other one anchors each panel on its subject. Every other mode uses the
+    configured fallback layout.
     """
     if mode == "two_up":
         return [{"start": round(start, 2), "end": round(end, 2), "layout": "stacked",
@@ -607,8 +838,10 @@ def analyze(src, start, end, prefer=None, workdir=None, split_screen=True,
     only consulted when no mode is given. AUTO keeps the conservative two-shot
     rule: both persistent faces must coexist in at least half the sampled frames,
     which avoids showing one person twice in shot/reverse-shot edits. TWO_UP
-    always returns a stacked layout — from two distinct co-present faces when
-    they exist, otherwise from the frame's own left/right views. ``scan_src``
+    always returns a stacked layout, with one panel per subject: two faces when
+    the detector has them, otherwise a weak face, motion or picture detail
+    (``views: "subject"``), and only the frame's own left/right views when
+    nothing can be measured. ``scan_src``
     (e.g. the 480p preview proxy) can be used for shot/face analysis; detected
     coordinates are scaled back to the source frame.
 
@@ -649,9 +882,18 @@ def analyze(src, start, end, prefer=None, workdir=None, split_screen=True,
     if on_progress:
         on_progress("Loading face detector", 0.0)
     det = get_detector()
-    if det is None:
+    try:
+        import cv2
+    except ImportError:
         return _fallback_shots(start, end, fallback, mode)
-    import cv2
+    if det is None and mode != "two_up":
+        # Nothing else is measurable without OpenCV: AUTO and OFF keep the
+        # configured fallback layout.
+        return _fallback_shots(start, end, fallback, mode)
+    # ...but forced two-up no longer depends on the face model: with the detector
+    # unavailable it still anchors each panel on what moves in that half of the
+    # frame (``detect_faces`` below returns nothing, and the motion path takes
+    # over), which is far better than cutting the frame at its quarter points.
 
     # Analysis can run on a small proxy; face boxes are scaled back to source pixels.
     scan = Path(scan_src) if scan_src and Path(scan_src).exists() else Path(src)
@@ -710,7 +952,7 @@ def analyze(src, start, end, prefer=None, workdir=None, split_screen=True,
                         0.5 + 0.5 * i / max(1, len(bounds) - 1))
         s0, s1 = bounds[i], bounds[i + 1]
         fr = by_shot.get(i, [])
-        dets = [(t, detect_faces(frame, det)) for t, frame in fr]
+        dets = [(t, detect_faces(frame, det)) if det is not None else (t, []) for t, frame in fr]
         tracks = track(dets, W, SPLIT_PERSIST_FRAC if mode == "two_up" else PERSIST_FRAC)
         faces = []
         for tr in tracks:
@@ -721,10 +963,43 @@ def analyze(src, start, end, prefer=None, workdir=None, split_screen=True,
                           statistics.median(ws), tr))
         faces = distinct_faces(faces, W)
         pair = None
+        anchors = None
         if mode == "two_up":
             layout = "stacked"
             if len(faces) >= 2:
-                pair = _select_split_pair(faces, W, len(fr), min_coexistence=0.0)
+                pair = _select_split_pair(faces, W, len(fr), min_coexistence=0.0,
+                                          min_sep=SPLIT_SEPARATION)
+            anchors = pair
+            if anchors is None and fr:
+                # The detector missed one of the speakers (a turned head, a face
+                # too small or too soft for YuNet). Rather than cutting the frame
+                # blindly at its quarter points — which leaves both people at the
+                # side of their panel — anchor each panel on the subject that is
+                # really in that part of the frame: a weakly detected face, then
+                # movement, then detail. One person is never split across both
+                # panels: a second subject has to be far enough to be someone else.
+                loose = []
+                for tr in track(dets, W, persist=LOOSE_PERSIST / max(1.0, float(len(fr)))):
+                    cx = statistics.median([p[1] for p in tr])
+                    cy = statistics.median([p[2] for p in tr])
+                    w = statistics.median([p[3] for p in tr])
+                    if any(math.hypot(cx - f[0], cy - f[1]) <
+                           max(DUPLICATE_CENTRE * max(w, f[2]), 0.05 * W) for f in faces):
+                        continue                      # the same head, detected again
+                    loose.append((cx, cy, w))
+                loose.sort(key=lambda c: -c[2])
+                found = subject_columns(fr, W, H,
+                                        faces=[(f[0], f[1], f[2]) for f in faces],
+                                        loose=loose, count=2)
+                if found and len(found) == 1:
+                    # Only one subject could be placed. Keep it centred — that is
+                    # the whole point — and give the other panel the frame's own
+                    # half, which is what a blind split used to do for both.
+                    (cx, cy, w) = found[0]
+                    other = 0.75 * W if cx < W / 2 else 0.25 * W
+                    found = [found[0], (other, cy, min(w, MOTION_MAX_FACE * W))]
+                if found and len(found) == 2:
+                    anchors = [(cx, cy, w, None) for cx, cy, w in found]
         else:
             layout = decide([(f[0], f[1], f[2]) for f in faces], W,
                             allow_split=(mode == "auto"))
@@ -733,24 +1008,26 @@ def analyze(src, start, end, prefer=None, workdir=None, split_screen=True,
                 if s1 - s0 < MIN_STACK_SECONDS or pair is None:
                     # Not a stable, simultaneous two-shot: keep a single tracked face.
                     layout = decide([(f[0], f[1], f[2]) for f in faces], W, allow_split=False)
+            anchors = pair
         if layout == "blur_fit":
             layout = fallback
         shot = {"start": round(s0, 2), "end": round(s1, 2), "layout": layout,
                 "faces": len(faces)}
         if layout == "stacked":
-            shot["views"] = "faces" if pair else "frame"
+            shot["views"] = "faces" if pair else ("subject" if anchors else "frame")
             if mode == "two_up":
                 shot["mode"] = mode
-            if pair:
-                shot["panels"] = _panels([(f[0] * scan_scale, f[1] * scan_scale,
-                                           f[2] * scan_scale, 0) for f in pair],
+            if anchors:
+                shot["panels"] = _panels([(a[0] * scan_scale, a[1] * scan_scale,
+                                           a[2] * scan_scale, 0) for a in anchors],
                                          int(round(W * scan_scale)), int(round(H * scan_scale)))
-                try:
-                    act = speaker_activity(fr, [f[3] for f in pair], rms)
-                    if act:
-                        shot["active"] = act
-                except Exception:
-                    log.debug("active-speaker detection failed", exc_info=True)
+                if pair:
+                    try:
+                        act = speaker_activity(fr, [f[3] for f in pair], rms)
+                        if act:
+                            shot["active"] = act
+                    except Exception:
+                        log.debug("active-speaker detection failed", exc_info=True)
         elif layout == "face":
             tr = max(faces, key=lambda f: len(f[3]))[3]
             sm = smooth_centers([(p[0], p[1]) for p in tr], W)

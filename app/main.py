@@ -27,7 +27,7 @@ with st.expander("Advanced"):
         format_func=lambda m: {"auto": "Auto (two-shot only)", "two_up": "Force two-up",
                                "off": "Off"}[m],
         help="Auto stacks top/bottom only when two different faces are on screen together. "
-             "Force two-up always stacks two distinct views (frame halves when there are no faces). "
+             "Force two-up always stacks two distinct views, each centred on its own speaker. "
              "Off never stacks.")
     use_llm = st.checkbox("Use Ollama LLM scoring", value=True)
 

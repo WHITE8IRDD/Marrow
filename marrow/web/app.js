@@ -229,7 +229,7 @@ const tog = (key, label, on, hint) => `<label class="tog"><input type="checkbox"
 const SPEAKER_MODES = ['auto', 'two_up', 'off'];
 const SPEAKER_COPY = {
   auto: ['Auto — two-shot only', 'Stacks top/bottom only when two people are really on screen together; shot/reverse-shot stays solo.'],
-  two_up: ['Force two-up', 'Always stacks two views: the two faces when both are visible, otherwise the frame’s own left and right halves.'],
+  two_up: ['Force two-up', 'Always stacks two views, each centred on its own speaker. Faces are tracked automatically; when one cannot be found, movement in that half of the frame anchors the panel.'],
   off: ['Off', 'Never stacks. Every shot uses the fallback framing above.']
 };
 /* Mirrors marrow.layout.normalize_speaker_mode so the UI and the renderer always
