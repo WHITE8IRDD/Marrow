@@ -22,6 +22,24 @@ Multi-speaker framing is chosen by ``speaker_mode``:
 With three or more visible speakers the two most reliable distinct faces are
 used (genuine coexistence first, then the larger pair) — a third person is never
 invented by re-using a panel.
+
+**Auto-centering.** A stacked panel is a crop anchored on the person it belongs
+to, and its width is derived from the subjects rather than from a fixed share of
+the frame (``_panels``/``_panel_widths``): both panels get one width, narrowed
+only as far as it takes to put *both* speakers on their own panel's centre line,
+floored so an edge subject is clamped instead of the whole panel shrinking to a
+stamp. A panel can therefore be a head-and-shoulders shot of its own speaker at
+any spacing, from shoulder to shoulder to opposite edges of the frame.
+
+Framing needs two *found* subjects, so two-up gives a shot that came up short a
+second look before falling back (``_second_look``): the same frames re-detected
+with a lower score threshold and a smaller minimum face, which recovers the
+speaker YuNet's own 0.9 default drops (a head turned away to listen). If that
+still leaves one subject, ``subject_columns`` anchors the other panel on what
+moves in the part of the frame no subject occupies — a listener who turned away
+still moves — and only when nothing at all can be measured does the shot fall
+back to the frame's own two views. That last path is the one case that cannot be
+centred (both speakers keep the frame halves they had).
 """
 import base64
 import hashlib
@@ -49,22 +67,35 @@ MIN_FACE_W = 0.06      # fraction of frame width
 MIN_SCORE = 0.6
 PERSIST_FRAC = 0.60
 SPLIT_PERSIST_FRAC = 0.25  # forced two-up also accepts a face seen in ~1/4 of a shot
-SEPARATION = 0.20      # face-center distance (fraction of width) for "two people"
+# Face-centre distance (fraction of the frame width) that counts as "two people".
+# Duplicate boxes on one head are merged first (see `distinct_faces`), so this only
+# has to stay clear of that. A podcast pair sitting well inside the frame can be
+# narrow — measured 0.18 W on a real two-shot — and refusing it (the old 0.20 bar)
+# is what sent each speaker to the outer edge of a frame-half panel instead of the
+# middle of a face-framed one.
+SEPARATION = 0.13
 SPLIT_SEPARATION = 0.10  # forced two-up: closer than this and it is one person twice
 MIN_COEXISTENCE = 0.50 # both faces must be visible in the same frame for half the samples
 MIN_STACK_SECONDS = 2.5 # skip fleeting detections and shot/reverse-shot transitions
-CACHE_VERSION = 6
+CACHE_VERSION = 7      # bumped with the auto-centering panel geometry
 
 # ---------------------------------------------------------------- panel framing
 # How each half of a stacked two-up is framed. The goal is that the person a
-# panel belongs to sits in the middle of that panel, at a sane size, with the
-# other speaker out of the way -- so the crop is anchored on the *person*, never
-# on a fixed quarter of the frame.
+# panel belongs to sits on the middle line of that panel, at a sane size, with
+# the other speaker out of the way -- so the crop is anchored on the *subject*,
+# never on a fixed quarter of the frame, and both halves are one composition.
+#
+# Each panel is one half of a 9:16 output, i.e. 1080x960 = 9:8. Both panels get
+# the SAME width, so the two speakers are framed at the same scale; a split whose
+# halves are zoomed differently reads as two mismatched shots.
+PANEL_ASPECT = 9.0 / 8.0   # panel width / height
 PANEL_TIGHTNESS = 0.92   # tallest crop that still fits the source (fraction of H)
-FACE_FILL = 3.0          # panel width as a multiple of face width (head + shoulders)
+FACE_FILL = 4.0          # *intended* panel width, in face widths (head + shoulders)
+PANEL_MIN_WIDTH = 0.45     # ...never tighter than this share of the source frame
+MIN_PANEL_FRACTION = 0.14  # ...nor is any panel narrower than this share, ever
+PANEL_FACE_FLOOR = 2.2     # a panel is never below this many face widths
 NEIGHBOUR_KEEP_OUT = 1.25  # panel width <= gap x this: the other speaker stays outside
-MIN_PANEL_FRACTION = 0.14  # never crop narrower than this fraction of the source width
-PANEL_HEADROOM = 0.40    # face centre sits this far down the crop
+PANEL_HEADROOM = 0.42    # face centre sits this far down the crop
 # A half with no detected face is still framed on its subject when something
 # there moves: a talking head, hands and a shifting weight move every second,
 # walls, posters and light stands do not. This is what keeps a listener who
@@ -75,6 +106,20 @@ MOTION_MIN_WIDTH = 0.06  # narrowest subject motion may stand in for (fraction o
 MOTION_HEAD_RATIO = 1.7  # measured: a talking head moves across ~1.7x its face width
 MOTION_MAX_FACE = 0.20   # widest face a motion blob is allowed to imply
 LOOSE_PERSIST = 2        # a face seen in this many samples may anchor a panel
+# Second look at a shot that yielded fewer than two faces: the same frames are
+# re-detected with a lower score threshold and a smaller minimum face, because the
+# marginal detection two-up needs is the second speaker (turned away to listen,
+# backlit, small in the frame). YuNet's own default threshold is 0.9, so the strict
+# pass drops exactly that face. Only shots short of two faces pay for the extra
+# pass, and a blob small next to the known speaker is rejected (`_substantial`).
+SECOND_LOOK_SCORE = 0.40
+SECOND_LOOK_MIN_FACE_W = 0.045
+# A second speaker is at least this share of the widest face's width: a partner
+# sitting further from the camera is smaller (measured 0.4 on a real two-shot with
+# one person closer to the lens), while a face on a poster or a background extra is
+# a fraction of that. Deliberately generous — missing a real speaker costs a panel,
+# and a small adjacent face is still a person.
+SECOND_LOOK_SIZE_RATIO = 0.35
 # Duplicate detections of the *same* face (a mirror, or two boxes on one head) are
 # merged, so a single speaker can never fill both panels.
 DUPLICATE_CENTRE = 0.35  # centre distance below this fraction of the face width = same face
@@ -99,6 +144,7 @@ ENERGY_FPS = 16000 / 512     # frames/sec of the cached energy.npy (audio_featur
 
 _lock = threading.Lock()
 _detector = {"det": None, "size": None, "warned": False, "tried_dl": False}
+_second_detector = {"det": None, "size": None}
 
 
 # ------------------------------------------------------------------ speaker modes
@@ -338,8 +384,12 @@ def sample_frames(src, start, end, fps=SAMPLE_FPS, max_width=None):
     return samples
 
 
-def detect_faces(frame, det):
-    """[(x, y, w, h, score)] in original-frame pixels."""
+def detect_faces(frame, det, min_score=MIN_SCORE, min_face_frac=MIN_FACE_W):
+    """[(x, y, w, h, score)] in original-frame pixels.
+
+    ``min_score`` / ``min_face_frac`` default to the analysis thresholds; the
+    two-up second look (``_second_look``) passes its own, lower pair.
+    """
     import cv2
 
     h, w = frame.shape[:2]
@@ -351,12 +401,16 @@ def detect_faces(frame, det):
         input_frame = cv2.resize(frame, (input_w, input_h), interpolation=cv2.INTER_AREA)
         sx, sy = w / input_w, h / input_h
     ih, iw = input_frame.shape[:2]
-    if _detector["size"] != (iw, ih):
-        try:
-            det.setInputSize((iw, ih))
-        except Exception:
-            pass
-        with _lock:
+    # The detector keeps one input size at a time and the two detectors are used
+    # at different sizes, so this is set on every call: measured at 0.5 us against
+    # a 33 ms detect. Caching it per detector was both pointless and wrong — a
+    # caller passing its own detector (tests) poisoned the cached size.
+    try:
+        det.setInputSize((iw, ih))
+    except Exception:
+        pass
+    with _lock:
+        if det is _detector["det"]:
             _detector["size"] = (iw, ih)
     try:
         _, faces = det.detect(input_frame)
@@ -366,12 +420,48 @@ def detect_faces(frame, det):
         return []
     out = []
     for f in faces:
-        x, y, ww, hh, score = (float(v) for v in f[:5])
+        # YuNet rows are [x, y, w, h, 5 landmark pairs..., score]: the score is the
+        # last column, not the fifth (which is the right eye's x). Reading it from
+        # index 4 made MIN_SCORE compare a pixel coordinate against 0.6, i.e. it
+        # never rejected a low-confidence box.
+        x, y, ww, hh = (float(v) for v in f[:4])
+        score = float(f[-1]) if len(f) >= 15 else float(f[4])
         x, ww = x * sx, ww * sx
         y, hh = y * sy, hh * sy
-        if score >= MIN_SCORE and ww >= w * MIN_FACE_W:
+        if score >= min_score and ww >= w * min_face_frac:
             out.append((x, y, ww, hh, score))
     return out
+
+
+# The second look always calls the real implementation: tests (and callers) patch
+# `detect_faces` to script what a shot sees, and the relaxed pass must not be
+# routed through those stubs with a different signature.
+_detect_faces_impl = detect_faces
+
+
+def get_second_detector():
+    """A second YuNet instance with a lower score threshold, or None.
+
+    Deliberately does *not* download the model: the second look is an
+    optimisation for shots that would otherwise fall back to motion anchoring or
+    frame halves, not a requirement, and such a shot is still framed.
+    """
+    with _lock:
+        if _second_detector["det"] is not None:
+            return _second_detector["det"]
+    if not MODEL_PATH.exists():
+        return None
+    try:
+        import cv2
+
+        det = cv2.FaceDetectorYN.create(str(MODEL_PATH), "", (320, 320),
+                                       SECOND_LOOK_SCORE, 0.4)
+        with _lock:
+            _second_detector["det"] = det
+        return det
+    except Exception:
+        log.debug("Second-look face detector is unavailable", exc_info=True)
+        return None
 
 
 def track(samples, frame_w, persist=PERSIST_FRAC):
@@ -480,6 +570,47 @@ def distinct_faces(faces, frame_w):
     return kept
 
 
+def _median_faces(tracks):
+    """(cx, cy, w, track) per track, from median box centres."""
+    out = []
+    for tr in tracks:
+        out.append((statistics.median([p[1] for p in tr]),
+                    statistics.median([p[2] for p in tr]),
+                    statistics.median([p[3] for p in tr]), tr))
+    return out
+
+
+def _second_look(samples, dets):
+    """Re-detect a shot whose first pass found fewer than two faces.
+
+    YuNet's default score threshold (0.9, which the 2023mar weights are trained
+    around) drops a head turned away to listen to the person beside them, which is
+    exactly the face a two-up panel needs. The extra pass runs on the frames that
+    were already decoded, only for the shots that need it, and its boxes are
+    merged with the strict ones — ``track`` matches the duplicate to the existing
+    track rather than inventing a second speaker. Returns None when no second
+    detector is available (the caller then keeps the first pass).
+    """
+    det = get_second_detector()
+    if det is None or not samples:
+        return None
+    out = []
+    for (t, boxes), (_t, frame) in zip(dets, samples):
+        extra = _detect_faces_impl(frame, det, SECOND_LOOK_SCORE, SECOND_LOOK_MIN_FACE_W)
+        out.append((t, list(boxes) + extra))
+    return out
+
+
+def _substantial(faces):
+    """Drop faces that are far smaller than the biggest one (a wall portrait, a
+    face on a poster, a false positive on a shirt). Used on the second-look path,
+    where the threshold is deliberately low."""
+    if not faces:
+        return faces
+    biggest = max(f[2] for f in faces)
+    return [f for f in faces if f[2] >= SECOND_LOOK_SIZE_RATIO * biggest]
+
+
 def _select_split_pair(faces, frame_w, sample_count, min_coexistence=MIN_COEXISTENCE,
                        min_sep=SEPARATION):
     """Best persistent, well-separated pair of *distinct* faces.
@@ -574,67 +705,97 @@ def speaker_activity(frames, tracks, rms=None, energy_fps=ENERGY_FPS):
 
 
 
+def _sane_face(face, W, H):
+    """A subject with usable numbers: malformed (NaN/inf) data must not reach int().
+
+    Panel geometry is cached in JSON and written by earlier versions, so a crop is
+    built from it defensively: an unusable centre falls back to the middle of the
+    frame instead of taking the render down.
+    """
+    cx, cy, w = (float(v) for v in face[:3])
+    if not math.isfinite(cx):
+        cx = W / 2.0
+    if not math.isfinite(cy):
+        cy = H * PANEL_HEADROOM
+    if not (math.isfinite(w) and w > 0):
+        w = float(W) * MIN_FACE_W
+    return (cx, cy, w) + tuple(face[3:])
+
+
+def _panel_widths(ordered, W, H, aspect=PANEL_ASPECT):
+    """The one width both panels use, so each subject is centred in their half.
+
+    A fixed-width crop cannot be centred on a subject that sits near the frame
+    edge — clamping its x coordinate to the frame is what pushed that speaker off
+    to the side of their panel. So the width comes from the subjects instead:
+
+    ``ideal``    the framing intent on its own: head + shoulders (``FACE_FILL``
+                 face-widths), never tighter than ``PANEL_MIN_WIDTH`` of the frame.
+    ``centred``  the widest equal crop that still puts *both* subjects on their own
+                 panel's centre line: ``2 * min(cx, W - cx)`` for each of them, so
+                 the tighter of the two wins.
+    ``floor``    a subject pressed against the frame edge cannot be centred without
+                 shrinking the panel to a stamp; keep a usable crop and clamp
+                 instead (a small, bounded offset beats an unusable panel).
+    ``limit``    when the speakers sit close together, tighten the crop so it does
+                 not swallow the neighbour's head — floored, and only applied to
+                 side-by-side pairs (a vertical two-shot is separated along y).
+    """
+    ideal, floors, centres = [], [], []
+    widest = min(float(W), float(H) * aspect) * PANEL_TIGHTNESS
+    for cx, _cy, w, _h in ordered:
+        target = min(widest, max(float(w) * FACE_FILL, float(W) * PANEL_MIN_WIDTH))
+        floors.append(min(target, max(float(w) * PANEL_FACE_FLOOR,
+                                      float(W) * MIN_PANEL_FRACTION)))
+        centres.append(min(max(float(cx), 0.0), float(W)))
+        ideal.append(target)
+    width = min(ideal)
+    if centres:
+        width = min(width, min(2.0 * min(c, W - c) for c in centres))
+    if floors:
+        width = max(width, min(floors))
+    if len(ordered) == 2:
+        a, b = ordered
+        if abs(a[0] - b[0]) >= abs(a[1] - b[1]):        # side by side, not stacked
+            limit = abs(a[0] - b[0]) * NEIGHBOUR_KEEP_OUT
+            if limit > 0:
+                width = min(width, max(limit, min(floors)))
+    return max(2.0, width)
+
+
 def _panels(faces, W, H):
     """Two 9:8 crops, one anchored on each subject, source-left/top first.
 
     Each panel is centred on the person it belongs to (subject centre = crop
     centre, within the even-pixel rounding yuv420p needs), never on a fixed
-    quarter of the frame. Three rules keep that framing usable:
-
-    * **Fit the pair.** A close pair gets a tighter crop — the panel is a
-      head-and-shoulders shot of its own speaker, wide enough that the person
-      is not cropped to a nose, narrow enough that the *other* speaker
-      (``NEIGHBOUR_KEEP_OUT``) stays outside the panel.
-    * **Fit the source.** A fixed-width crop cannot be centred on a subject
-      close to the source edge: clamping its x coordinate to the frame pushes
-      that person toward the side of the panel. Only the crop that needs it is
-      narrowed, so its centre stays on the subject inside the source frame.
-    * **Fit the vertical.** The subject's face sits ``PANEL_HEADROOM`` down the
-      crop, which keeps a natural amount of headroom instead of a chin on the
-      bottom edge.
+    quarter of the frame. Both panels get the width from ``_panel_widths`` and
+    the same shape as the output's half-frame, so the split reads as one
+    deliberate composition rather than two differently zoomed shots, and the
+    subject's face sits ``PANEL_HEADROOM`` down the crop (the headroom a
+    talking-head shot wants).
 
     ``faces`` are ``(cx, cy, w, track)`` tuples in source pixels; the first two
     are used, ordered left-to-right (top-to-bottom for a vertical two-shot).
     """
-    ordered = _panel_order(faces[:2], W)
-    # The widest crop that fits the source height still leaves a little air.
-    widest = min(float(W), float(H) * 9.0 / 8.0) * PANEL_TIGHTNESS
-    # Only a side-by-side pair can be kept out by narrowing the crop; two people
-    # stacked one above the other (a vertical two-shot) are separated along the
-    # other axis, so they keep the wide crop and are topped/bottomed by y.
-    side_by_side = False
-    if len(ordered) > 1:
-        side_by_side = abs(ordered[0][0] - ordered[1][0]) >= abs(ordered[0][1] - ordered[1][1])
-    gap = abs(ordered[0][0] - ordered[1][0]) if side_by_side else None
+    ordered = _panel_order([_sane_face(f, W, H) for f in faces[:2]], W)
+    cw = _panel_widths(ordered, W, H)
+    aspect = PANEL_ASPECT if PANEL_ASPECT > 0 else 9.0 / 8.0
     panels = []
-    for cx, cy, w, _track in ordered:
-        cw = float(widest)
-        if gap:                                  # close pair: keep the neighbour out
-            cw = min(cw, max(float(w) * FACE_FILL, gap * NEIGHBOUR_KEEP_OUT))
-        cw = max(cw, min(float(W), float(H) * 9.0 / 8.0) * MIN_PANEL_FRACTION)
+    for cx, cy, _w, _track in ordered:
         face_cx = float(cx)
-        if 0.0 <= face_cx <= W:
-            # When a subject is close to either side, shrink its crop just enough
-            # to keep the subject centre aligned instead of clamping the crop.
-            # Stop shrinking at MIN_PANEL_FRACTION so a cornered speaker is a
-            # tight close-up rather than a 5x blow-up of a few pixels.
-            floor = max(float(w) * 2.4, float(W) * MIN_PANEL_FRACTION, 2.0)
-            cw = max(min(cw, 2.0 * min(face_cx, W - face_cx)), min(cw, floor))
-        else:
+        if not 0.0 <= face_cx <= W:
             # Face boxes should be inside the frame. Be defensive with stale or
             # malformed analysis data: preserve a valid crop at the nearest edge.
-            face_cx = min(max(face_cx, cw / 2.0), W - cw / 2.0)
-
-        cw = max(2, int(cw) // 2 * 2)
-        ch = max(2, min(H - H % 2, int(round(cw * 8.0 / 9.0)) // 2 * 2))
-        cw = max(2, int(round(ch * 9.0 / 8.0)) // 2 * 2)   # re-fit width to the final height
+            face_cx = min(max(face_cx, cw / 2.0), max(cw / 2.0, W - cw / 2.0))
+        cw_q = max(2, int(cw) // 2 * 2)
+        ch = max(2, min(H - H % 2, int(round(cw_q / aspect)) // 2 * 2))
         # Recompute from the quantized crop dimensions; x is then centred on
         # the detected subject to within one pixel (required even by yuv420p).
-        x = int(round(face_cx - cw / 2.0))
-        x = min(max(x, 0), max(0, W - cw))
+        x = int(round(face_cx - cw_q / 2.0))
+        x = min(max(x, 0), max(0, W - cw_q))
         y = int(min(max(cy - PANEL_HEADROOM * ch, 0.0), max(0.0, H - ch)))
         x, y = x - (x % 2), y - (y % 2)
-        panels.append({"x": x, "y": y, "w": cw, "h": ch})
+        panels.append({"x": x, "y": y, "w": cw_q, "h": ch})
     while len(panels) < 2:
         # Defensive: never reached from ``analyze`` (which always passes two
         # anchors). Fall back to the frame's own half, which is what the renderer
@@ -953,15 +1114,16 @@ def analyze(src, start, end, prefer=None, workdir=None, split_screen=True,
         s0, s1 = bounds[i], bounds[i + 1]
         fr = by_shot.get(i, [])
         dets = [(t, detect_faces(frame, det)) if det is not None else (t, []) for t, frame in fr]
-        tracks = track(dets, W, SPLIT_PERSIST_FRAC if mode == "two_up" else PERSIST_FRAC)
-        faces = []
-        for tr in tracks:
-            xs = [p[1] for p in tr]
-            ys = [p[2] for p in tr]
-            ws = [p[3] for p in tr]
-            faces.append((statistics.median(xs), statistics.median(ys),
-                          statistics.median(ws), tr))
-        faces = distinct_faces(faces, W)
+        persist = SPLIT_PERSIST_FRAC if mode == "two_up" else PERSIST_FRAC
+        faces = distinct_faces(_median_faces(track(dets, W, persist)), W)
+        if mode == "two_up" and len(faces) < 2:
+            # Two-up needs two people: give the shot a second chance with a relaxed
+            # detector (the face YuNet's own 0.9 default drops) before falling back
+            # to motion anchoring or the frame's two halves.
+            again = _second_look(fr, dets)
+            if again:
+                dets = again
+                faces = _substantial(distinct_faces(_median_faces(track(dets, W, persist)), W))
         pair = None
         anchors = None
         if mode == "two_up":

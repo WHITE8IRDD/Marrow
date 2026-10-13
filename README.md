@@ -63,14 +63,43 @@ the largest, then the left-most — and merge duplicate detections of the same p
 is talking, so a panel only pushes in on the speaker being heard.
 
 **Speaker centring.** A panel is a head-and-shoulders crop whose centre *is* its
-speaker: the crop is narrowed for a close pair so the other speaker stays out of
-the panel, and narrowed again — never shifted — when a speaker sits near the
-source edge, where clamping a fixed-width crop is what used to push people to the
-side of their half. Two speakers who sit shoulder to shoulder are still two
-panels. Panel geometry is stored per shot (`shots[].panels`), and
-`shots[].views` says where it came from: `faces` (two detections), `subject`
-(motion/detail fallback) or `frame` (the frame's own halves — the only case where
-nothing could be measured, e.g. a completely static shot).
+speaker, and **both panels share one width**, so a split reads as one deliberate
+composition instead of two differently zoomed shots. The width comes from the
+subjects: the crop is narrowed from its intended `4` face-widths only as far as
+it takes to put both speakers on their own panel's centre line, floored at `2.2`
+face-widths and at `14%` of the frame — a speaker pressed against the source edge
+is the one case that is clamped a little off centre instead of shrinking the
+panel (and with it, the picture quality) to a stamp. A close pair is narrowed
+further so the other speaker stays out of the panel, and two speakers who sit
+shoulder to shoulder still get one panel each.
+
+Framing needs two *found* subjects, so a two-up shot that came up short gets a
+second look: the frames already sampled for face detection are re-detected with a
+lower score threshold and a smaller minimum face. YuNet's own default is `0.9`, so
+the strict pass drops exactly the marginal face a two-up panel needs — the head
+turned away to listen. If that still leaves one subject, `shots[].views` reports
+where the other panel's anchor came from: `subject` (what moves in the part of
+the frame no subject occupies — a listener who turned away still moves, then where
+the picture's detail is) or `frame` (the frame's own halves, the only case that
+cannot be centred: nothing at all was measurable). A blob far smaller than the
+speaker found is ignored, so a face on a poster cannot fill a panel.
+
+`scripts/two_up_check.py` reports the number that matters — how far each speaker
+sits from the centre of their own panel, in a fraction of the panel's width, with
+the face re-detected *inside the crop* those coordinates describe:
+
+```bash
+python scripts/two_up_check.py podcast.mp4 --start 12 --end 42       # measure the plan
+python scripts/two_up_check.py podcast.mp4 --render --shot-png check.png   # + the encode
+```
+
+It exits non-zero when any measured speaker is further than `--tolerance` (5% by
+default) off centre. On the fixture two-shots (photographed faces composited into
+a 1080p frame, from a mid-frame pair to one speaker at the frame's edge) the worst
+measured offset is `0.013` of a panel width; the fixed-width crops it replaced
+reached `0.39`, i.e. the panel's own edge. `tests/test_two_up_centering.py` covers
+the same ground from the geometry up to a rendered 1080x1920 frame whose halves
+are re-detected.
 
 `render.split_screen: true|false` (the older boolean) still works and means
 Auto / Off; `render.speaker_mode` wins when both are present. Projects, job
@@ -195,6 +224,7 @@ With `--shots DIR` it also writes a screenshot per width.
 | Faster | `whisper.model: base`, `llm.model: llama3.2:3b`, `render.encoder: h264_nvenc` |
 | Slides or screen recordings | `render.layout: blur_fit` |
 | Podcast two-shot panels | Home’s framing control: **Auto** (two-shots only), **Force two-up** (every clip), or **Off** — or `render.speaker_mode` in `config.yaml` (`split_screen: true|false` still works) |
+| Split panel too tight/loose | `FACE_FILL` (intended width, in face widths) and `MIN_PANEL_FRACTION` / `PANEL_FACE_FLOOR` (the floor) in `marrow/layout.py`; `NEIGHBOUR_KEEP_OUT` clears a neighbour’s head |
 | Captions hidden by app UI | Raise `platforms.<name>.caption_margin_v` |
 | Less shouty captions | `captions.uppercase: false` |
 | Karaoke-style captions | `captions.preset: karaoke` (spoken words stay highlighted) |
@@ -210,8 +240,13 @@ clips perform best well under the cap, so the default `clip.max_duration` is 60 
 - **`ffmpeg was not found`**: install FFmpeg and open a new terminal.
 - **Nothing looks split-screen**: check the framing mode (Auto keeps shot/reverse-shot footage solo on
   purpose — use Force two-up), and that the YuNet model downloaded (Settings → System check shows
-  whether OpenCV and the model are ready; without them only Force two-up can stack, and it uses the
-  frame's own halves).
+  whether OpenCV and the model are ready; without them only Force two-up can stack, and it falls back
+  to motion/detail anchoring, then the frame's own halves).
+- **A two-up panel still looks off-centre**: run `python scripts/two_up_check.py <video> --start 12
+  --end 42` on the source (add `--shot-png check.png` to see the crops drawn on the frame). A speaker
+  more than 5% off centre means the pair was rejected — they sit closer than `SEPARATION` for Auto or
+  `SPLIT_SEPARATION` for Force two-up — or only one subject could be placed at all; the printed
+  `views` value says which path the shot took.
 - **GPU or CUDA/DLL errors**: In **Auto** mode, Marrow retries on CPU when CUDA is unusable
   and shows the reason. Explicit **GPU (CUDA)** mode instead fails with diagnostic details;
   it never silently starts a CPU transcription. CUDA DLL directory handles are kept alive
