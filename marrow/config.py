@@ -33,10 +33,17 @@ DEFAULTS = {
     },
     "render": {
         "layout": "crop",
+        # NB: "speaker_mode" is deliberately absent from the defaults so that a
+        # config.yaml (or saved job settings) that only carries the legacy
+        # "split_screen" boolean still decides the mode: true -> auto,
+        # false -> off. Add "speaker_mode: auto|two_up|off" to override it.
         "split_screen": True,
         "encoder": "auto",
         "preset": "veryfast",
         "crf": 20,
+        "nvenc_preset": "p5",
+        "nvenc_tune": "hq",
+        "nvenc_cq": 21,
         "fps": 30,
         "loudnorm": True,
     },

@@ -220,6 +220,60 @@ const seg = (key, items, val) => `<div class="seg" data-opt="${key}">${items.map
   `<button type="button" class="${v === val ? 'on' : ''}" data-v="${v}" data-act="seg">${l}</button>`).join('')}</div>`;
 const tog = (key, label, on, hint) => `<label class="tog"><input type="checkbox" data-opt="${key}" ${on ? 'checked' : ''}><span class="knob"></span><span class="tl">${label}${hint ? `<small>${hint}</small>` : ''}</span></label>`;
 
+/* ---------- multi-speaker framing (auto / force two-up / off) ---------- */
+/* The three modes are the real setting; split_screen stays the payload key (and
+   is still read as a boolean) so older projects and API clients keep working. */
+const SPEAKER_MODES = ['auto', 'two_up', 'off'];
+const SPEAKER_COPY = {
+  auto: ['Auto — two-shot only', 'Stacks top/bottom only when two people are really on screen together; shot/reverse-shot stays solo.'],
+  two_up: ['Force two-up', 'Always stacks two views: the two faces when both are visible, otherwise the frame’s own left and right halves.'],
+  off: ['Off', 'Never stacks. Every shot uses the fallback framing above.']
+};
+/* Mirrors marrow.layout.normalize_speaker_mode so the UI and the renderer always
+   agree on what a value means (aliases included). */
+const TWO_UP_ALIASES = ['two_up', 'twoup', 'force', 'force_two_up', 'forced', 'split', 'stack', 'stacked'];
+const ON_WORDS = ['on', 'yes', 'true', '1'];
+const OFF_WORDS = ['off', 'none', 'no', 'false', '0', 'null'];
+const word = raw => (raw === undefined || raw === null ? '' : String(raw).trim().toLowerCase().replace(/-/g, '_'));
+const asMode = raw => {
+  const v = word(raw);
+  if (SPEAKER_MODES.includes(v)) return v;
+  if (TWO_UP_ALIASES.includes(v)) return 'two_up';
+  return null;
+};
+const asLegacy = raw => {
+  const v = word(raw);
+  if (SPEAKER_MODES.includes(v)) return v;
+  if (OFF_WORDS.includes(v)) return 'off';
+  if (ON_WORDS.includes(v)) return 'auto';
+  if (TWO_UP_ALIASES.includes(v)) return 'two_up';
+  return null;
+};
+function modeOf(o) {
+  const raw = o?.speaker_mode;
+  if (typeof raw === 'boolean') return raw ? 'auto' : 'off';
+  const mode = asMode(raw);
+  if (mode) return mode;
+  const legacy = o?.split_screen;
+  if (typeof legacy === 'boolean') return legacy ? 'auto' : 'off';
+  if (typeof legacy === 'number') return legacy ? 'auto' : 'off';
+  return asLegacy(legacy) || 'auto';
+}
+const speakerModeHTML = (o, status, statusText) => {
+  const mode = modeOf(o);
+  const [title, hint] = SPEAKER_COPY[mode];
+  return `<div class="speaker-mode" data-mode="${mode}">
+    <div class="seg wide" data-opt="split_screen" role="group" aria-label="Multi-speaker framing">
+      <button type="button" class="${mode === 'auto' ? 'on' : ''}" data-v="auto" data-act="seg" title="Stack only genuine two-shots">Auto</button>
+      <button type="button" class="${mode === 'two_up' ? 'on' : ''}" data-v="two_up" data-act="seg" title="Always stack two views">Force two-up</button>
+      <button type="button" class="${mode === 'off' ? 'on' : ''}" data-v="off" data-act="seg" title="Never stack">Off</button>
+    </div>
+    <span class="speaker-diagram" aria-hidden="true"><i></i><i></i></span>
+    <span class="tl"><b>${title}</b><small>${hint}</small></span>
+    <span class="mode-status ${status || 'pending'}"><i aria-hidden="true"></i>${esc(statusText || '')}</span>
+  </div>`;
+};
+
 const FONT_OPTIONS = [
   'Montserrat ExtraBold',
   'Anton',
@@ -340,13 +394,7 @@ function optsPanel(o, compact) {
     <div class="opt-group"><span class="fl">Fallback framing</span>${seg('layout', [['crop', 'Center crop'], ['blur_fit', 'Blur fit']], o.layout)}</div>
     <div class="opt-group">
       <span class="fl">Multi-speaker framing</span>
-      <label class="speaker-mode">
-        <input type="checkbox" data-opt="split_screen" ${o.split_screen === false ? '' : 'checked'} aria-label="Enable split-screen for multi-speaker scenes">
-        <span class="speaker-diagram" aria-hidden="true"><i></i><i></i></span>
-        <span class="tl"><b>Stack both speakers</b><small>Co-present two-shots use top/bottom panels; solo cuts stay face-tracked.</small></span>
-        <span class="mode-status ${visionReady ? 'ready' : (s && !vision.opencv ? 'missing' : 'pending')}"><i aria-hidden="true"></i>${esc(visionHint)}</span>
-        <span class="knob"></span>
-      </label>
+      ${speakerModeHTML(o, visionReady ? 'ready' : (s && !vision.opencv ? 'missing' : 'pending'), visionHint)}
     </div>
     <div class="opt-group"><span class="fl">Number of clips</span>
       <div class="stepper"><button type="button" class="icon sm" data-step="clips" data-d="-1" aria-label="Fewer clips">${ico('minus')}</button>
@@ -641,6 +689,10 @@ function updateHomePreview() {
   const optBox = document.getElementById('optbox') || document;
   const o = readOpts(optBox);
   const st = getResolvedStyle(root);
+  const mode = modeOf(o);
+  // The framing card lives with the options, not with the phone preview: keep it
+  // in step even when the preview is not on screen (e.g. the regenerate dialog).
+  syncSpeakerModeCopy(optBox, mode);
 
   // 1. Small phone preview
   const phone = document.getElementById('homePhone');
@@ -648,11 +700,13 @@ function updateHomePreview() {
     const isBlurFit = (o.layout === 'blur_fit');
     phone.classList.toggle('layout-blur_fit', isBlurFit);
     phone.classList.toggle('layout-crop', !isBlurFit);
-    phone.classList.toggle('split-enabled', o.split_screen !== false);
+    phone.classList.toggle('split-enabled', mode !== 'off');
+    phone.classList.toggle('split-forced', mode === 'two_up');
     phone.classList.toggle('has-zoom', !!o.zoom && !isBlurFit);
 
     const frameBadge = document.getElementById('prevFrameBadge');
-    if (frameBadge) frameBadge.textContent = o.split_screen !== false ? 'Auto split' : (isBlurFit ? 'Blur Fit' : 'Crop');
+    if (frameBadge) frameBadge.textContent = mode === 'two_up' ? 'Two-up'
+      : mode === 'auto' ? 'Auto split' : (isBlurFit ? 'Blur Fit' : 'Crop');
     
     const styleBadge = document.getElementById('prevStyleBadge');
     if (styleBadge) styleBadge.textContent = st.label || st.presetKey || 'Style';
@@ -667,13 +721,26 @@ function updateHomePreview() {
     const isBlurFit = (o.layout === 'blur_fit');
     modalPhone.classList.toggle('layout-blur_fit', isBlurFit);
     modalPhone.classList.toggle('layout-crop', !isBlurFit);
-    modalPhone.classList.toggle('split-enabled', o.split_screen !== false);
+    modalPhone.classList.toggle('split-enabled', mode !== 'off');
+    modalPhone.classList.toggle('split-forced', mode === 'two_up');
     modalPhone.classList.toggle('has-zoom', !!o.zoom && !isBlurFit);
 
 
     const modalCap = document.getElementById('modalCap');
     if (modalCap) renderLiveCaption(modalCap, st, sampleLang, tickIdx);
   }
+}
+
+function syncSpeakerModeCopy(root, mode) {
+  const box = $('.speaker-mode', root || document);
+  if (!box) return;
+  const [title, hint] = SPEAKER_COPY[mode] || SPEAKER_COPY.auto;
+  box.dataset.mode = mode;
+  const b = $('.tl b', box), small = $('.tl small', box);
+  if (b) b.textContent = title;
+  if (small) small.textContent = hint;
+  const segBox = $('.seg', box);
+  if (segBox) $$('button', segBox).forEach(x => x.classList.toggle('on', x.dataset.v === mode));
 }
 
 function repaintHomeCap() {
@@ -1249,7 +1316,7 @@ const Home = { probeId: null, timer: null, probeReady: false, probeFailed: false
 const FOUND_KEY = 'marrowFound';   // the fetched link + probe id, kept for the tab so a reload or a page switch doesn't refetch
 const LINK_RE = /^https?:\/\/[^\s/]+\.[^\s]+/i;
 function viewHome() {
-  if (!state.opts) state.opts = state.settings ? state.settings.job_defaults : { clips: 5, duration: 45, platform: 'shorts', layout: 'crop', split_screen: true, captions: true, use_llm: true, zoom: false, caption_style: { preset: 'bold-pop', overrides: {} } };
+  if (!state.opts) state.opts = state.settings ? state.settings.job_defaults : { clips: 5, duration: 45, platform: 'shorts', layout: 'crop', speaker_mode: 'auto', split_screen: true, captions: true, use_llm: true, zoom: false, caption_style: { preset: 'bold-pop', overrides: {} } };
   const s = state.system;
   main.innerHTML = `
   ${s && !s.ffmpeg ? `<div class="banner bad">${ico('alert')}<div>FFmpeg wasn’t found, so clips can’t be rendered. Install it (Windows: <code>winget install ffmpeg</code>), open a new terminal and restart Marrow.</div></div>` : ''}

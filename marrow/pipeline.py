@@ -83,7 +83,7 @@ def _fmt_span(sec):
 def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_count=None,
                  clip_duration=None, platform="shorts", layout=None, use_llm=None,
                  force=False, progress=None, config=None, on_source=None, eta_holder=None,
-                 split_screen=None):
+                 split_screen=None, speaker_mode=None):
     """Run the full pipeline. Returns a list of result dicts (also saved as manifest.json)."""
 
     def emit(stage, frac, **kw):
@@ -103,7 +103,15 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
         cfg["render"]["layout"] = layout
     if use_llm is not None:
         cfg["llm"]["enabled"] = bool(use_llm)
-    if split_screen is not None:
+    from .layout import normalize_speaker_mode
+
+    if speaker_mode is not None:
+        mode = normalize_speaker_mode(speaker_mode, None)
+        cfg["render"]["speaker_mode"] = mode
+        cfg["render"]["split_screen"] = mode != "off"
+    elif split_screen is not None:
+        mode = normalize_speaker_mode(None, bool(split_screen))
+        cfg["render"]["speaker_mode"] = mode
         cfg["render"]["split_screen"] = bool(split_screen)
 
     max_dur = min([clip["max_duration"]] + [cfg["platforms"][p]["max_duration"] for p in plats])
@@ -359,26 +367,39 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
     from . import layout as _layout
     from . import studio as _studio
 
+    speaker_mode_value = _layout.speaker_mode_for(cfg["render"])
+    # The 480p preview proxy (built for the UI) is plenty for shot cuts and face
+    # detection, and decodes far faster than the full-res source.
+    scan_src = proxy if proxy.exists() and proxy.resolve() != Path(render_src).resolve() else None
+    clip_bounds = {}
     clip_shots = {}
     for rank, c in enumerate(chosen, 1):
         s, e = padded_bounds(c, clip["pad_start"], clip["pad_end"], duration)
+        clip_bounds[rank] = (s, e)
         try:
             clip_shots[rank] = _layout.analyze(
                 render_src, s, e, workdir=src.workdir,
                 split_screen=cfg["render"].get("split_screen", True),
+                speaker_mode=speaker_mode_value,
+                scan_src=scan_src,
                 fallback=cfg["render"].get("layout", "crop"))
         except Exception:
             log.exception("Shot analysis failed")
             clip_shots[rank] = None
     seg_ranks = {rank for rank in clip_shots
-                 if _studio.needs_segmented_render(clip_shots.get(rank))}
+                 if _studio.needs_segmented_render(clip_shots.get(rank))
+                 and _studio.uniform_layout(clip_shots.get(rank)) is None}
     if seg_ranks:
         emit(f"Smart layout: segmented render for clip(s) {sorted(seg_ranks)}", 0.80,
              clips=prog_clips)
+    elif any(_studio.uniform_layout(shots) for shots in clip_shots.values()):
+        emit("Smart layout: stacked two-up render", 0.80, clips=prog_clips)
+    # Preview thumbs never need full resolution: the 480p scan source decodes
+    # several times cheaper and the tiles are 270x480 anyway.
     try:
-        for rank, c in enumerate(chosen, 1):
-            s, e = padded_bounds(c, clip["pad_start"], clip["pad_end"], duration)
-            _studio.make_clip_thumb(render_src, s, src.workdir / f"pre_{rank:02d}.jpg")
+        _studio.make_clip_thumbs(scan_src or render_src,
+                                 [(rank, clip_bounds[rank][0]) for rank in sorted(clip_bounds)],
+                                 src.workdir)
     except Exception:
         log.debug("clip preview thumbs failed", exc_info=True)
 
@@ -389,6 +410,7 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
 
     tasks = [(rank, c, plat) for rank, c in enumerate(chosen, 1) for plat in render_plats
              if rank not in seg_ranks or plat == render_plats[0]]
+    uniform = {rank: _studio.uniform_layout(clip_shots.get(rank)) for rank in clip_shots}
     workers = 2 if pick_encoder(cfg["render"].get("encoder", "auto")) == "h264_nvenc" else 1
     lock = threading.Lock()
     state = {"done": 0}
@@ -419,7 +441,19 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
                 _bump(frac, left)
 
             shots = clip_shots.get(rank)
-            if _studio.needs_segmented_render(shots):
+            if uniform.get(rank):
+                # Every shot is the same frame-view two-up: one pass, no concat.
+                pcfg = cfg["platforms"][plat]
+                ass_path = None
+                if cfg["captions"]["enabled"]:
+                    ass_path = work_ass / f"clip_{rank:02d}_{plat}.ass"
+                    generate_ass(words, start, end, ass_path, cfg["captions"],
+                                 pcfg["res_x"], pcfg["res_y"], pcfg["caption_margin_v"])
+                out_path = out_dir / f"clip_{rank:02d}_{plat}.mp4"
+                render_clip(render_src, start, end, ass_path, out_path, cfg, plat,
+                            on_progress=rprog, layout=uniform[rank])
+                outcome = (start, end, str(out_path), None)
+            elif _studio.needs_segmented_render(shots):
                 outs = _studio.render_clip_shots(
                     cfg, render_src, src.workdir, words, rank, start, end,
                     render_plats, out_dir, cfg["captions"]["enabled"], shots, rprog)

@@ -22,9 +22,13 @@ platform = c3.selectbox("Output format", ["shorts", "reels", "both"], index=2)
 with st.expander("Advanced"):
     layout = st.radio("Fallback framing", ["crop", "blur_fit"], horizontal=True,
                       help="Used when no subject can be tracked: crop the center or fit the full frame over blur.")
-    split_screen = st.checkbox(
-        "Split-screen multi-speaker conversations", value=True,
-        help="Stack both people vertically when a real two-shot is detected; single-person cuts stay face-tracked.")
+    speaker_mode = st.radio(
+        "Multi-speaker framing", ["auto", "two_up", "off"], horizontal=True,
+        format_func=lambda m: {"auto": "Auto (two-shot only)", "two_up": "Force two-up",
+                               "off": "Off"}[m],
+        help="Auto stacks top/bottom only when two different faces are on screen together. "
+             "Force two-up always stacks two distinct views (frame halves when there are no faces). "
+             "Off never stacks.")
     use_llm = st.checkbox("Use Ollama LLM scoring", value=True)
 
 if st.button("Generate clips", type="primary"):
@@ -41,7 +45,7 @@ if st.button("Generate clips", type="primary"):
         try:
             st.session_state["results"] = run_pipeline(
                 source.strip(), clip_count=num_clips, clip_duration=duration,
-                platform=platform, layout=layout, split_screen=split_screen,
+                platform=platform, layout=layout, speaker_mode=speaker_mode,
                 use_llm=use_llm, progress=on_progress,
             )
             status.write("Done")

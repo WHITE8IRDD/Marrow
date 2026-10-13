@@ -5,6 +5,11 @@ from .caption_styles import ensure_fonts
 from .utils import run_ffmpeg, run_ffmpeg_progress
 
 _nvenc_ok = None
+NVENC_PRESETS = tuple(f"p{i}" for i in range(1, 8))
+NVENC_TUNES = ("hq", "ll", "ull", "lossless")
+DEFAULT_NVENC_PRESET = "p5"
+DEFAULT_NVENC_TUNE = "hq"
+DEFAULT_NVENC_CQ = 21
 
 
 def pick_encoder(pref):
@@ -20,6 +25,48 @@ def pick_encoder(pref):
         except Exception:
             _nvenc_ok = False
     return "h264_nvenc" if _nvenc_ok else "libx264"
+
+
+def nvenc_preset(render_cfg=None):
+    """Configured NVENC preset ('p1' fastest .. 'p7' slowest), default p5."""
+    value = str((render_cfg or {}).get("nvenc_preset") or "").strip().lower()
+    return value if value in NVENC_PRESETS else DEFAULT_NVENC_PRESET
+
+
+def nvenc_tune(render_cfg=None):
+    value = str((render_cfg or {}).get("nvenc_tune") or "").strip().lower()
+    return value if value in NVENC_TUNES else DEFAULT_NVENC_TUNE
+
+
+def encoder_args(enc, render_cfg=None, crf=None):
+    """Video encoder arguments, shared by normal renders and exports.
+
+    NVENC gets the configured preset/tune and a constant-quality target so the
+    Settings choice is applied identically everywhere; libx264 keeps using
+    ``render.preset``/``render.crf``.
+    """
+    render_cfg = render_cfg or {}
+    if enc in ("h264_nvenc", "hevc_nvenc"):
+        try:
+            cq = int(render_cfg.get("nvenc_cq", DEFAULT_NVENC_CQ))
+        except (TypeError, ValueError):
+            cq = DEFAULT_NVENC_CQ
+        if crf is not None:
+            cq = int(crf)
+        return ["-c:v", enc, "-preset", nvenc_preset(render_cfg), "-tune", nvenc_tune(render_cfg),
+                "-rc", "vbr", "-cq", str(max(15, min(35, cq))), "-b:v", "0"]
+    try:
+        crf = int(render_cfg.get("crf", 20) if crf is None else crf)
+    except (TypeError, ValueError):
+        crf = 20
+    return ["-c:v", "libx264", "-preset", render_cfg.get("preset", "veryfast"),
+            "-crf", str(max(0, min(51, crf)))]
+
+
+def encoder_label(enc):
+    """Human name for the hardware panel, so GPU vs CPU fallback is obvious."""
+    return {"h264_nvenc": "NVENC H.264", "hevc_nvenc": "NVENC HEVC",
+            "libx264": "libx264 (CPU)"}.get(enc, enc)
 
 
 def _hermite(u):
@@ -56,12 +103,19 @@ def _panel_zoom_expr(intervals, panel, fps, amp=0.07, ramp=0.30):
 
 def build_filter_graph(layout, rx, ry, fps, zoom, ass_name=None, shot=None):
     """Build the -filter_complex string. The final labeled output is [v].
-    shot: optional per-shot geometry for stacked/face layouts."""
+
+    shot: optional per-shot geometry. Two stacked variants exist:
+    * ``panels`` present -> one crop per face-derived panel (auto two-shot or
+      forced two-up on real faces; also the active-speaker push-ins).
+    * no ``panels`` (``views: "frame"``, or a manual stacked override) -> the
+      frame's own two side-by-side views are cropped and stacked. This is the
+      forced two-up path that works with no face data at all; it never shows the
+      same speaker twice because each panel is a different half of the frame.
+    """
     ratio = rx / ry
     if layout == "face" and not (shot and shot.get("cw")):
         layout = "crop"          # manual override without track data: center crop
     if layout == "stacked" and not (shot and shot.get("panels")):
-        # manual override without face data: split the frame left/right instead
         base = (
             f"[0:v]split=2[ta][tb];"
             f"[ta]crop='min(ih*9/8,iw/2)':h='ow*8/9':x='iw/4-ow/2':y='(ih-oh)/2',"
@@ -138,9 +192,17 @@ def render_clip(video_path, start, end, ass_path, output_path, config, platform=
     plat = config["platforms"][platform]
     rx, ry = plat["res_x"], plat["res_y"]
     r = config["render"]
-    enc = pick_encoder(r.get("encoder", "auto"))
-    hw.set_engine("render", device="gpu" if enc == "h264_nvenc" else "cpu",
-                  encoder=enc, label="NVENC" if enc == "h264_nvenc" else "libx264")
+    requested = str(r.get("encoder", "auto")).lower()
+    enc = pick_encoder(requested)
+    # Report the encoder that will really run, so the hardware panel can tell a
+    # GPU encode apart from a CPU fallback (and say why it fell back).
+    cpu_fallback = None
+    if enc == "libx264" and requested == "auto":
+        cpu_fallback = "NVENC not available on this machine → libx264 on CPU"
+    hw.set_engine("render", device="gpu" if enc in ("h264_nvenc", "hevc_nvenc") else "cpu",
+                  encoder=enc, label=encoder_label(enc),
+                  preset=nvenc_preset(r) if enc != "libx264" else r.get("preset"),
+                  fallback=cpu_fallback)
 
     video_path = Path(video_path).resolve()
     output_path = Path(output_path).resolve()
@@ -151,11 +213,7 @@ def render_clip(video_path, start, end, ass_path, output_path, config, platform=
     graph = build_filter_graph(layout or r["layout"], rx, ry, r["fps"], config["zoom"],
                                ass.name if ass else None, shot=shot)
 
-    if enc == "h264_nvenc":
-        venc = ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",
-                "-rc", "vbr", "-cq", "21", "-b:v", "0"]
-    else:
-        venc = ["-c:v", "libx264", "-preset", r["preset"], "-crf", r["crf"]]
+    venc = encoder_args(enc, r)
 
     args = [
         "-ss", f"{start:.3f}", "-i", video_path, "-t", f"{end - start:.3f}",

@@ -175,6 +175,22 @@ def needs_segmented_render(shots):
     return any((s.get("layout") in ("stacked", "face")) for s in (shots or []))
 
 
+def uniform_layout(shots):
+    """The single layout that renders the whole clip in one pass, or None.
+
+    A clip whose shots are all the *same* stacked frame-view composition (forced
+    two-up without face panels) needs no per-shot segmentation: the renderer's
+    built-in left/right split draws them all, so one encode replaces a
+    render-per-shot plus a concat.
+    """
+    if not shots:
+        return None
+    if all(s.get("layout") == "stacked" and not s.get("panels") and not s.get("active")
+           for s in shots):
+        return "stacked"
+    return None
+
+
 def relative_shot(sg, seg_start, seg_dur):
     """Shot dict for the renderer: times (incl. active-speaker intervals) made
     relative to the segment the renderer will encode from 0."""
@@ -211,6 +227,10 @@ def render_clip_shots(cfg, media, workdir, words, rank, start, end, plats, out_d
     workdir, out_dir = Path(workdir), Path(out_dir)
     ass_dir = workdir / "ass"
     ass_dir.mkdir(parents=True, exist_ok=True)
+    if uniform_layout(shots):
+        # Same composition everywhere: render once instead of segment + concat.
+        return _render_single_layout(cfg, media, workdir, words, rank, start, end,
+                                     plats, out_dir, captions_on, uniform_layout(shots))
     segs = normalize_shots(shots, start, end, cfg["render"]["layout"])
     total_dur = max(0.1, end - start)
     done = [0.0]
@@ -259,6 +279,10 @@ def render_clip_files(cfg, source, workdir, words, rank, start, end, platforms, 
     from .caption_styles import ensure_fonts
     from .renderer import render_clip
 
+    uni = uniform_layout(shots)
+    if uni:
+        return _render_single_layout(cfg, source, workdir, words, rank, start, end,
+                                     platforms, out_dir, captions_on, uni)
     if needs_segmented_render(shots):
         return render_clip_shots(cfg, source, workdir, words, rank, start, end,
                                  platforms, out_dir, captions_on, shots)
@@ -277,6 +301,32 @@ def render_clip_files(cfg, source, workdir, words, rank, start, end, platforms, 
         final = Path(out_dir) / f"clip_{rank:02d}_{plat}.mp4"
         tmp = final.with_name(final.stem + ".part.mp4")
         render_clip(source, start, end, ass_path, tmp, cfg, plat)
+        os.replace(tmp, final)
+        produced[plat] = final
+    return produced
+
+
+def _render_single_layout(cfg, source, workdir, words, rank, start, end, platforms, out_dir,
+                          captions_on, layout):
+    """One encode per platform with a fixed layout (used by forced two-up)."""
+    from .caption_styles import ensure_fonts
+    from .captioner import generate_ass
+    from .renderer import render_clip
+
+    ass_dir = Path(workdir) / "ass"
+    ass_dir.mkdir(parents=True, exist_ok=True)
+    ensure_fonts(ass_dir)
+    produced = {}
+    for plat in platforms:
+        pcfg = cfg["platforms"][plat]
+        ass_path = None
+        if captions_on:
+            ass_path = ass_dir / f"clip_{rank:02d}_{plat}.ass"
+            generate_ass(words, start, end, ass_path, cfg["captions"],
+                         pcfg["res_x"], pcfg["res_y"], pcfg["caption_margin_v"])
+        final = Path(out_dir) / f"clip_{rank:02d}_{plat}.mp4"
+        tmp = part_path(final)
+        render_clip(source, start, end, ass_path, tmp, cfg, plat, layout=layout)
         os.replace(tmp, final)
         produced[plat] = final
     return produced
@@ -341,11 +391,13 @@ def export_clip(cfg, media, workdir, words, rank, start, end, spec, out_path,
             shots = _layout.analyze(
                 media, start, end, workdir=workdir,
                 split_screen=cfg["render"].get("split_screen", True),
+                speaker_mode=_layout.speaker_mode_for(cfg["render"]),
                 fallback=cfg["render"].get("layout", "crop"))
         shots = apply_shot_overrides(shots, overrides)
-        segmented = needs_segmented_render(shots)
+        uniform = uniform_layout(shots)
+        segmented = needs_segmented_render(shots) and uniform is None
     else:
-        segmented = False
+        uniform, segmented = None, False
 
     d = Path(workdir) / "ass_export"
     d.mkdir(parents=True, exist_ok=True)
@@ -361,15 +413,16 @@ def export_clip(cfg, media, workdir, words, rank, start, end, spec, out_path,
     except (TypeError, ValueError):
         pass
     crf = max(16, min(32, crf))
-    if enc == "h264_nvenc":
-        venc = ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",
-                "-rc", "vbr", "-cq", str(crf), "-b:v", "0"]
-    elif enc == "hevc_nvenc":
-        venc = ["-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq",
-                "-rc", "vbr", "-cq", str(crf), "-b:v", "0"]
-    else:
-        venc = ["-c:v", "libx264", "-preset", cfg["render"].get("preset", "veryfast"),
-                "-crf", str(crf)]
+    # Same encoder arguments as a normal render, so a configured NVENC preset
+    # (and tune/CQ) applies to exports identically instead of hard-coded p5.
+    from . import hw
+    from .renderer import encoder_args, encoder_label, nvenc_preset
+
+    venc = encoder_args(enc, cfg["render"], crf)
+    hw.set_engine("export", device="gpu" if enc in ("h264_nvenc", "hevc_nvenc") else "cpu",
+                  encoder=enc, label=encoder_label(enc), quality=quality,
+                  preset=(nvenc_preset(cfg["render"]) if enc != "libx264"
+                          else cfg["render"].get("preset")))
     try:
         mbps = float(adv.get("video_mbps") or 0)
     except (TypeError, ValueError):
@@ -440,7 +493,7 @@ def export_clip(cfg, media, workdir, words, rank, start, end, spec, out_path,
         run_ffmpeg(["-f", "concat", "-safe", "0", "-i", lst, "-c", "copy",
                     "-movflags", "+faststart", tmp])
     else:
-        layout = fr if fr in ("crop", "blur_fit") else cfg["render"]["layout"]
+        layout = uniform or (fr if fr in ("crop", "blur_fit") else cfg["render"]["layout"])
         ass_path = None
         if spec.get("captions", True):
             ass_path = d / f"export_{rank:02d}.ass"
@@ -488,14 +541,43 @@ def waveform(workdir, buckets=600):
     return out
 
 
-def make_clip_thumb(source, start, jpg_path):
+def make_clip_thumb(source, start, jpg_path, scale="270:480"):
     """9:16 first frame of a clip window (for progress tiles). Best effort."""
     try:
         run_ffmpeg(["-ss", f"{start:.3f}", "-i", source, "-frames:v", "1",
-                    "-vf", "crop=ih*9/16:ih,scale=270:480,format=yuv420p", jpg_path])
+                    "-vf", f"crop=ih*9/16:ih,scale={scale},format=yuv420p", jpg_path])
         return True
     except Exception:
         return False
+
+
+def make_clip_thumbs(source, items, workdir, scale="270:480"):
+    """Preview tile for every clip window, one ffmpeg per clip. Returns {rank: path}.
+
+    Kept as a single call site so the pipeline can hand in the cheapest source it
+    has: run this on the 480p scan proxy rather than the full-res source and the
+    decode is several times cheaper (5 tiles from a 1080p source: 1322 ms; the
+    same 5 tiles from the 480p proxy: 245 ms). Doing all of them in one ffmpeg
+    process was measured *slower* (1718 ms / 363 ms) - each input still pays its
+    own seek, and the extra inputs cost more than the process start-ups they save.
+    Best effort: tiles that fail stay missing.
+    """
+    items = [(int(rank), float(t)) for rank, t in (items or []) if t is not None]
+    workdir = Path(workdir)
+    made = {}
+    for rank, t in items:
+        jpg = workdir / f"pre_{rank:02d}.jpg"
+        if make_clip_thumb(source, t, jpg, scale=scale):
+            made[rank] = jpg
+        else:
+            log_thumb_failure()
+    return made
+
+
+def log_thumb_failure():
+    from .utils import log
+
+    log.debug("clip preview thumb failed", exc_info=True)
 
 
 def make_thumb(video_path, jpg_path):

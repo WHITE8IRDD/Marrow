@@ -29,6 +29,7 @@ macOS/Linux: same steps with `source venv/bin/activate` and your package manager
 marrow "https://www.youtube.com/watch?v=..." --clips 5 --duration 45 --platform both
 marrow "C:\videos\podcast.mp4" --platform shorts --layout blur_fit
 marrow "<url>" --no-llm            # skip Ollama, rank by audio and heuristics only
+marrow "<url>" --speaker-mode two_up   # auto (default) | two_up | off
 marrow-ui                         # web UI at http://localhost:8765
 ```
 
@@ -38,14 +39,33 @@ and Settings pages.
 
 ## Smart layout
 
-When split-screen is enabled, verified two-shots with two persistent faces visible
-at the same time render as **stacked** top/bottom panels, with captions on the seam.
-Shot/reverse-shot edits are not mistaken for a two-shot. Single speakers get a
-**face-tracked crop**; slides and screen recordings use **blur fit**. Layouts are
-chosen per shot and can be overridden in the Edits inspector. OpenCV is installed
-with Marrow; the small YuNet face model downloads itself on first use (or via
-Settings → Download models now). If face detection is unavailable, Marrow falls
-back to the configured crop/blur fit and logs one warning.
+Single speakers get a **face-tracked crop**; slides and screen recordings use
+**blur fit**. Layouts are chosen per shot and can be overridden in the Edits
+inspector. OpenCV is installed with Marrow; the small YuNet face model downloads
+itself on first use (or via Settings → Download models now).
+
+### Multi-speaker framing
+
+Home offers three modes (also `--speaker-mode` on the CLI and a radio in the
+Streamlit app). The same setting travels through generation, regeneration and the
+export dialog:
+
+| Mode | What it does |
+|---|---|
+| **Auto** (default) | Stacked top/bottom panels only for *verified* two-shots: two different faces that are genuinely on screen at the same time, with captions on the seam. Shot/reverse-shot edits stay solo, so one speaker is never shown twice. |
+| **Force two-up** | Always two panels. With two distinct faces it crops one panel per person; with only one face (or none) it crops **the frame's own left and right halves** and stacks them — it never duplicates a speaker to fill a panel. Works even when face detection is unavailable. |
+| **Off** | Never stack. Every shot uses the configured fallback framing (center crop / blur fit). |
+
+With three or more people on screen, Auto and Force two-up pick the best *distinct*
+pair — preferring faces that are on screen together, then the most persistent, then
+the largest, then the left-most — and merge duplicate detections of the same person
+(overlapping boxes) instead of repeating a face. Mouth-motion analysis decides who
+is talking, so a panel only pushes in on the speaker being heard.
+
+`render.split_screen: true|false` (the older boolean) still works and means
+Auto / Off; `render.speaker_mode` wins when both are present. Projects, job
+settings and manifests keep both fields, so older clients, scripts and the
+Streamlit UI keep working.
 
 **Active-speaker focus.** In stacked shots Marrow watches each face's mouth motion
 (gated by the audio energy) to work out who is talking, and gently pushes in on the
@@ -66,6 +86,43 @@ output/<video_id>/manifest.json      # title, score, reason, hashtags and file p
 Downloads, transcripts and LLM scores are cached in `work/<video_id>/`, so re-running with a
 different clip count or style is fast. Use `--force` to start over.
 
+## Performance
+
+`scripts/bench.py` measures the work Marrow repeats most (shot analysis, frame
+sampling, preview tiles, a forced two-up render) on a synthetic 1080p clip, so
+these numbers can be re-checked on your own machine:
+
+```bash
+python scripts/bench.py            # everything
+python scripts/bench.py sampling   # or: analysis thumbs render probe
+```
+
+Measured in a 2-core Linux sandbox (FFmpeg 7.0.2, x264 `veryfast`; synthetic
+`testsrc2` source, so treat them as relative, not absolute):
+
+| Step | Before | After | Why |
+|---|---|---|---|
+| Shot analysis of a 60 s window | 10.6 s on the 1080p source | 1.08 s on the 480p proxy | analysis and face detection run on the preview proxy, and face boxes are scaled back to source pixels |
+| Frame sampling, 2.5 fps | 1.82 s (`read()`) | 1.37 s (`grab()` + `retrieve()`) | decoding is unavoidable; converting every skipped frame to BGR is not (1.4× on the proxy too) |
+| 5 clip preview tiles | 1.32 s from the 1080p source | 0.24 s from the 480p proxy | tiles are 270×480, so decoding full resolution for them is wasted work (2.9–5.4× across runs) |
+| Repeated duration probes | ~60 ms each | ~0 ms | `probe_duration` memoises per (path, size, mtime) |
+
+Rendering is encode-bound, not process-bound: on the same box an 8 s 1080×1920
+clip takes ~4.3 s of wall clock, and swapping the scaler from `lanczos` to
+`bicubic`/`bilinear` only changes that by ~6–9% while visibly softening the
+upscale — so the sharp scaler stayed. The real lever is the encoder
+(`render.encoder: h264_nvenc` on an NVIDIA card); the NVENC preset/tune/CQ values
+in Settings are applied to both normal renders and exports.
+
+A forced two-up clip renders in a single pass when every shot is frame-view
+stacked (no per-shot segments, no concat step); segment rendering is only used
+when the panel geometry actually changes inside a clip.
+
+Checks: `python -m pytest -q` runs the suite (Python tests that need FFmpeg skip
+themselves when it is missing). `node scripts/ui_check.mjs` loads the real
+`index.html` + `app.js` in jsdom and clicks the Home framing control — it needs
+`npm install jsdom` and is skipped by the suite when jsdom is unavailable.
+
 ## Tuning
 
 | Goal | Change in `config.yaml` |
@@ -73,7 +130,7 @@ different clip count or style is fast. Use `--force` to start over.
 | Better picks | Bigger Whisper model, a stronger Ollama model, `llm.max_candidates: 40` |
 | Faster | `whisper.model: base`, `llm.model: llama3.2:3b`, `render.encoder: h264_nvenc` |
 | Slides or screen recordings | `render.layout: blur_fit` |
-| Podcast two-shot panels | Home’s “Stack both speakers” toggle, or `render.split_screen: false` to disable |
+| Podcast two-shot panels | Home’s framing control: **Auto** (two-shots only), **Force two-up** (every clip), or **Off** — or `render.speaker_mode` in `config.yaml` (`split_screen: true|false` still works) |
 | Captions hidden by app UI | Raise `platforms.<name>.caption_margin_v` |
 | Less shouty captions | `captions.uppercase: false` |
 | Karaoke-style captions | `captions.preset: karaoke` (spoken words stay highlighted) |
@@ -87,6 +144,10 @@ clips perform best well under the cap, so the default `clip.max_duration` is 60 
 ## Troubleshooting
 
 - **`ffmpeg was not found`**: install FFmpeg and open a new terminal.
+- **Nothing looks split-screen**: check the framing mode (Auto keeps shot/reverse-shot footage solo on
+  purpose — use Force two-up), and that the YuNet model downloaded (Settings → System check shows
+  whether OpenCV and the model are ready; without them only Force two-up can stack, and it uses the
+  frame's own halves).
 - **GPU or CUDA/DLL errors**: Marrow exposes pip-installed CUDA libraries automatically and retries
   on CPU when the GPU is unusable (the UI shows the reason). For GPU speed on NVIDIA cards, install:
   `pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"` (cuDNN 9 needs ctranslate2 ≥ 4.5).

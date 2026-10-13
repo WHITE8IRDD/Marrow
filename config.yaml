@@ -38,10 +38,15 @@ clip:
 
 render:
   layout: crop                 # crop (center crop) or blur_fit (full frame over blurred background)
-  split_screen: true           # stack confirmed multi-speaker two-shots in vertical clips
+  speaker_mode: auto           # auto (verified co-present two-shots), two_up (force top/bottom
+                               # panels from two distinct views), off (never stack)
+  split_screen: true           # legacy boolean alias: true = auto, false = off (speaker_mode wins)
   encoder: auto                # auto (NVENC if available, else libx264), libx264 or h264_nvenc
-  preset: veryfast             # quicker CPU encoding with the same CRF quality
-  crf: 20                      # quality (lower = better); also used as -cq for nvenc
+  preset: veryfast             # libx264 preset for CPU encodes
+  crf: 20                      # libx264 quality (lower = better)
+  nvenc_preset: p5             # p1 (fastest) .. p7 (best quality); used by renders *and* exports
+  nvenc_tune: hq               # hq, ll, ull or lossless
+  nvenc_cq: 21                 # NVENC constant-quality target, like CRF (lower = better)
   fps: 30
   loudnorm: true               # normalize loudness to roughly -16 LUFS
 
