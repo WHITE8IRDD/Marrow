@@ -530,7 +530,7 @@ input[type="range"] { width: 100%; accent-color: var(--on); margin: 6px 0; }
 .bar { height: 8px; border-radius: 99px; background: var(--line-2); overflow: hidden; }
 .bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .5s var(--ease); }
 .bar.thin { height: 4px; }
-.steps-run { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; list-style: none; margin: 0; padding: 0; }
+.steps-run { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; list-style: none; margin: 0; padding: 0; }
 .step { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 10px; border-radius: 12px; background: var(--panel-2); color: var(--text-3); font-size: 12.5px; font-weight: 650; }
 .sdot { width: 22px; height: 22px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--panel-3); font-size: 11px; font-weight: 700; color: var(--text-2); }
 .sdot .i { width: 12px; height: 12px; stroke-width: 2.6; }
@@ -620,7 +620,7 @@ input[type="range"] { width: 100%; accent-color: var(--on); margin: 6px 0; }
 .ring { position: absolute; left: 50%; top: 42%; z-index: 2; width: 70px; height: 70px; margin: -35px 0 0 -35px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--accent) calc(var(--p, 0) * 1%), rgba(255, 255, 255, .18) 0); }
 .ring::before { content: ""; position: absolute; inset: 7px; border-radius: 50%; background: rgba(10, 10, 14, .85); }
 .ring b { position: relative; font-size: 13px; color: #fff; font-variant-numeric: tabular-nums; }
-.cbody { display: grid; gap: 10px; align-content: start; flex: 1; padding: 14px; min-width: 0; }
+.cbody { display: flex; flex-direction: column; gap: 10px; flex: 1; padding: 14px; min-width: 0; }
 .cbody h3 { min-height: 2.7em; font-size: 14px; line-height: 1.35; font-weight: 650; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .cmeta { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; color: var(--text-3); min-height: 18px; }
 .plat-seg { display: flex; gap: 3px; padding: 3px; border-radius: var(--r-pill); background: var(--panel-2); }
@@ -628,8 +628,11 @@ input[type="range"] { width: 100%; accent-color: var(--on); margin: 6px 0; }
 .plat-seg button.on { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .3); }
 .cerr { font-size: 12px; color: var(--bad); background: color-mix(in srgb, var(--bad) 9%, transparent); border-radius: 10px; padding: 8px 10px; overflow-wrap: anywhere; }
 .cactions { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) 36px; gap: 8px; align-items: center; margin-top: auto; }
-.cactions .btn { min-width: 0; padding: 0 9px; gap: 6px; font-size: 13px; }
-.menu { position: relative; }
+.cactions .btn { height: 36px; line-height: 1; min-width: 0; padding: 0 9px; gap: 6px; font-size: 13px; }
+.menu { position: relative; min-width: 0; }
+.cactions > .menu { height: 36px; align-self: end; }
+.cactions .i { flex: 0 0 16px; }
+.cactions summary.btn { display: flex; align-items: center; justify-content: center; margin: 0; }
 .menu > summary { list-style: none; }
 .menu > summary::-webkit-details-marker { display: none; }
 .menu > summary.btn { width: 36px; padding: 0; }
@@ -1269,3 +1272,7 @@ body {
   .home-saved-chevron { grid-column: 2; grid-row: 1 / 3; }
   .home-recent .sechead { align-items: flex-start; }
 }
+
+/* Pausing the preview must pause its decorative scan, too. */
+.scan.preview-paused .scan-sweep { animation-play-state: paused; }
+.scan-chip.label { max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

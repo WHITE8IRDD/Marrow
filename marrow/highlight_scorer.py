@@ -142,7 +142,7 @@ class OllamaScorer:
 
     def batch_score(self, texts, lang=None):
         """Score up to ~20 windows in ONE prompt. Returns a list aligned with
-        texts (None where the model failed); caller retries those individually."""
+        texts (None where the model failed); the pipeline keeps heuristic scores for misses."""
         if not texts:
             return []
         joined = "\n\n".join(f"--- WINDOW {i} ---\n{t[:4000]}" for i, t in enumerate(texts))

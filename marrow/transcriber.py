@@ -11,6 +11,7 @@ from . import hw
 
 FAST_MODELS = {"large-v3-turbo", "distil-large-v3"}
 _probe = None
+_DLL_HANDLES = []
 _CACHE = {"key": None, "model": None, "pipe": None}
 
 MODEL_REPOS = {
@@ -59,7 +60,7 @@ def add_cuda_dll_dirs():
             d = root / "nvidia" / sub / "bin"
             if d.is_dir():
                 try:
-                    os.add_dll_directory(str(d))
+                    _DLL_HANDLES.append(os.add_dll_directory(str(d)))
                 except OSError:
                     pass
                 os.environ["PATH"] = str(d) + os.pathsep + os.environ.get("PATH", "")
@@ -125,6 +126,18 @@ def _get_pipe(name, dev, ct):
     return model, pipe
 
 
+def release_gpu_model():
+    """Let scoring/encoding use VRAM once transcription is complete.
+
+    Keeping the pipeline alive also keeps its CTranslate2 model alive; gc alone
+    cannot release it. CPU models can safely stay cached between jobs.
+    """
+    key = _CACHE.get("key")
+    if key and key[1] == "cuda":
+        _CACHE.update(key=None, model=None, pipe=None)
+        gc.collect()
+
+
 def _run(name, dev, ct, audio_path, language, beam, bs, on_progress):
     _model, pipe = _get_pipe(name, dev, ct)
     t_first = None
@@ -155,16 +168,24 @@ def _run(name, dev, ct, audio_path, language, beam, bs, on_progress):
 
 
 def transcribe(audio_path, model_size="auto", device="auto", compute_type="int8_float16",
-               language=None, beam_size=1, batch_size=8, quality="fast", on_progress=None):
+               language=None, beam_size=1, batch_size=8, quality="fast", on_progress=None, on_status=None):
+    if on_status:
+        on_status("Checking transcription device")
     if device in ("auto", "cuda"):
         ok, why = cuda_ready()
     else:
         ok, why = False, "CPU selected in settings"
+    if device == "cuda" and not ok:
+        hw.set_engine("transcribe", device="unavailable", fallback=why)
+        raise RuntimeError("CUDA was selected but could not start. Check your NVIDIA driver and "
+                           "cuBLAS/cuDNN installation, or select Auto/CPU. Details: " + why)
     dev = "cuda" if ok else "cpu"
     ct = compute_type if ok else "int8"
-    fallback = None if ok else why
+    fallback = None if ok or device == "cpu" else why
 
     if not language:
+        if on_status:
+            on_status("Detecting transcript language")
         language, _ = detect_language(audio_path)
     name = pick_model(model_size, language, quality, dev)
     vram = vram_total_gb() if ok else 0.0
@@ -175,6 +196,8 @@ def transcribe(audio_path, model_size="auto", device="auto", compute_type="int8_
                   batch=bs, fallback=fallback)
     while True:
         try:
+            if on_status:
+                on_status(f"Loading Whisper {name} on {dev.upper()} (downloads if not cached)")
             return _run(name, dev, ct, audio_path, language, beam_size, bs, on_progress)
         except RuntimeError as e:
             if "out of memory" in str(e).lower() and bs > 1:
@@ -184,6 +207,12 @@ def transcribe(audio_path, model_size="auto", device="auto", compute_type="int8_
                 hw.set_engine("transcribe", device=dev, model=name, compute=ct,
                               language=language, batch=bs, fallback=fallback)
                 continue
+            if dev == "cuda" and device == "cuda":
+                release_gpu_model()
+                hw.set_engine("transcribe", device="unavailable", model=name, fallback=str(e))
+                raise RuntimeError("CUDA transcription failed; CPU fallback is disabled because "
+                                   "CUDA was explicitly selected. Reduce batch size/model size or "
+                                   "select Auto/CPU. Details: " + str(e)) from e
             if dev == "cuda":
                 log.warning("GPU transcription failed (%s). Falling back to CPU.", e)
                 dev, ct, bs, fallback = "cpu", "int8", 4, f"{type(e).__name__}: {e}"

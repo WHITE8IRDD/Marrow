@@ -1884,20 +1884,18 @@ function viewProject() {
   Scan.reset();
   paintProject(p, true);
   const sp = $('#scanPlay');
-  if (sp) sp.onclick = () => {
-    const v = $('#scanVideo'); if (!v) return;
-    if (v.paused) v.play().catch(() => {}); else v.pause();
-    paintScanPlay();
-  };
+  if (sp) sp.onclick = () => Scan.toggle();
   if (ACTIVE.has(p.status)) { Scan.mount(p.id); hwStart(); refreshProject(p.id); }
 }
-const STEP_NAMES = ['Fetch', 'Transcribe', 'Score', 'Render'];
+const STEP_NAMES = ['Prepare', 'Transcribe', 'Rank', 'Scan', 'Render', 'Finish'];
 function stepIndex(stage, status) {
-  if (status === 'done') return 4;
+  if (status === 'done') return STEP_NAMES.length;
   const s = (stage || '').toLowerCase();
-  if (/render|smart layout|clip \d/.test(s)) return 3;
+  if (/finaliz/.test(s)) return 5;
+  if (/scanning|layout|previews/.test(s)) return 3;
+  if (/render|encod|caption/.test(s)) return 4;
   if (/analy|scor|rank|shortlist|candidate|llm/.test(s)) return 2;
-  if (/transcrib|audio|extract/.test(s)) return 1;
+  if (/transcrib|transcript|whisper|audio|extract/.test(s)) return 1;
   return 0;
 }
 function paintSteps(active) {
@@ -1943,7 +1941,7 @@ function paintProject(p, force) {
       const pct = Math.max(+(prog.dataset.p || 0), e.pct); prog.dataset.p = String(pct);
       $('#pp-pct').textContent = pct + '%';
       $('#pp-stage').textContent = e.st || 'Working';
-      $('#pp-sub').textContent = p.stage && p.stage !== e.st ? p.stage : (p.clips.length ? `${p.clips.length} clip${p.clips.length === 1 ? '' : 's'} so far` : '');
+      $('#pp-sub').textContent = p.stage_since ? `Current step · ${fmtT(Date.now() / 1000 - p.stage_since)} elapsed` : 'Preparing the next step…';
       $('#pp-left').textContent = e.leftTxt || 'Estimating…';
       $('#pp-left').hidden = false;
       $('#pp-el').textContent = p.started ? `Elapsed ${fmtT(Date.now() / 1000 - p.started)}` : '';
@@ -1960,7 +1958,7 @@ function paintProject(p, force) {
       $('#pp-left').hidden = !total;
       $('#pp-el').hidden = true;
       $('#pp-fill').style.width = '100%';
-      paintSteps(4);
+      paintSteps(STEP_NAMES.length);
     }
   }
   if (scan) scan.hidden = !(running || queued) || localStorage.getItem('hideScan') === '1';
@@ -1977,7 +1975,7 @@ function paintProject(p, force) {
     const want = new Set(p.clips.map(c => String(c.rank)));
     have.forEach((el, k) => { if (!want.has(k)) el.remove(); });
     p.clips.forEach(c => {
-      const sig = [c.rev, c.status, c.title, c.last_error, (c.hashtags || []).join(','), c.start, c.end, (c.urls || {})[c.platforms[0]], c.render_pct, c.render_eta, c.thumb].join('|');
+      const sig = [c.rev, c.status, c.title, c.last_error, (c.hashtags || []).join(','), c.start, c.end, (c.urls || {})[c.platforms[0]], c.render_pct, c.render_eta, c.render_stage, c.thumb].join('|');
       const old = have.get(String(c.rank));
       if (old && old.dataset.sig === sig) return;
       const eln = cardEl(p, c, sig);
@@ -2013,7 +2011,7 @@ function cardEl(p, c, sig) {
     el.innerHTML = `<div class="vid">${c.rank ? `<img src="/api/projects/${p.id}/clips/${c.rank}/pre.jpg" alt="" onerror="this.remove()">` : ''}<div class="shade"></div>
         <div class="ring" style="--p:${pct}"><b>${pct}%</b></div></div>
       <div class="cbody"><h3 dir="auto">${esc(c.title || 'Clip #' + c.rank)}</h3>
-        <div class="cmeta"><span>Rendering · ${sub}</span></div><div class="bar thin"><i style="width:${pct}%"></i></div></div>`;
+        <div class="cmeta"><span>${esc(c.render_stage || 'Rendering')} · ${sub}</span></div><div class="bar thin"><i style="width:${pct}%"></i></div></div>`;
     return el;
   }
   el.dataset.plat = plat0;
@@ -2134,15 +2132,18 @@ function unmountVideo(v) {
 function paintScanPlay() {
   const v = document.getElementById('scanVideo'), b = document.getElementById('scanPlay');
   if (!b || !v) return;
-  b.innerHTML = ico(v.paused ? 'play' : 'pause', 'fill');
-  b.title = v.paused ? 'Play preview' : 'Pause preview';
+  b.innerHTML = ico(Scan.isPaused() ? 'play' : 'pause', 'fill');
+  b.title = Scan.isPaused() ? 'Resume preview (analysis continues)' : 'Pause preview (analysis continues)';
+  b.setAttribute('aria-pressed', String(Scan.isPaused()));
   b.setAttribute('aria-label', b.title);
 }
 
 /* ---------- live analysis panel ---------- */
 const Scan = (() => {
   const $id = id => document.getElementById(id);
+  let paused = false;
   function reset() {
+    paused = false;
     unmountVideo($id('scanVideo'));
     const lb = $id('logbody'); if (lb) lb.innerHTML = '';
     const mk = $id('marks'); if (mk) mk.innerHTML = '';
@@ -2150,13 +2151,24 @@ const Scan = (() => {
     update._lc = null;
   }
   function mount() { reset(); }
+  function toggle() {
+    paused = !paused;
+    const v = $id('scanVideo'), root = $id('scan');
+    if (v) {
+      if (paused) { v.pause(); v.ontimeupdate = null; }
+      else { update._lc = null; v.play().catch(() => {}); }
+    }
+    if (root) root.classList.toggle('preview-paused', paused);
+    paintScanPlay();
+  }
   function update(p, lines) {
     const root = $id('scan'); if (!root) return;
     const v = $id('scanVideo'), st = p.stage || '';
     const running = p.status === 'running';
+    root.classList.toggle('preview-paused', paused);
     const live = running && /render|encod|caption|clip \d/i.test(st);
     root.dataset.state = !running ? 'idle' : live ? 'live' : 'scanning';
-    $id('scanPill').textContent = running ? (live ? 'Rendering' : 'Analysing') : 'Idle';
+    $id('scanPill').textContent = paused ? 'Preview paused' : running ? STEP_NAMES[stepIndex(st, p.status)] : 'Idle';
     if (v && p.proxy && !v.dataset.src) {
       mountVideo(v, `/api/projects/${p.id}/proxy`, () => {
         const n = $id('scanNote');
@@ -2166,13 +2178,13 @@ const Scan = (() => {
     const strip = $id('strip');
     if (strip) strip.hidden = !p.strip;
     const si = $id('stripImg'); if (si && p.strip && !si.getAttribute('src')) si.src = `/api/projects/${p.id}/strip`;
-    $id('scanLabel').textContent = /download|prepar|extract/i.test(st) ? 'Downloading' : /transcrib/i.test(st) ? 'Transcribing audio' : /scor|analy|rank/i.test(st) ? 'Ranking moments' : 'Scanning content';
+    $id('scanLabel').textContent = st || 'Preparing…';
     $id('trs').textContent = /transcrib/i.test(st) ? 'processing' : 'done';
     $id('thr').textContent = running ? 'active' : 'idle';
     const dur = (p.scan && p.scan.dur) || (v && v.duration) || 1;
     const ph = $id('playhead');
     const ready = !!(v && v.dataset.src);
-    if (ready && root.dataset.state === 'scanning') {
+    if (ready && !paused && root.dataset.state === 'scanning') {
       if (p.scan) {
         if (Math.abs(v.currentTime - p.scan.t) > 3) { try { v.currentTime = p.scan.t; } catch (_) {} }
         v.play().catch(() => {});
@@ -2182,7 +2194,7 @@ const Scan = (() => {
         v.ontimeupdate = () => { if (v.currentTime > 60) { try { v.currentTime = 0; } catch (_) {} } };
       }
     }
-    if (ready && live) {
+    if (ready && !paused && live) {
       const c = (p.clips || []).find(x => x.status === 'rendering');
       if (c && update._lc !== c.rank) {
         update._lc = c.rank;
@@ -2213,7 +2225,7 @@ const Scan = (() => {
     }
     paintScanPlay();
   }
-  return { mount, update, reset };
+  return { mount, update, reset, toggle, isPaused: () => paused };
 })();
 
 /* ---------- hardware meters (one compact row; no duplicated detail panel) ---------- */
@@ -2223,7 +2235,7 @@ function paintHw(d) {
   const eng = d.engines || {};
   const t = eng.transcribe, r = eng.render, l = eng.llm;
   const isGpu = e => e && (e.device === 'cuda' || e.device === 'gpu');
-  const chip = e => e ? `<span class="chip ${isGpu(e) ? 'ok' : 'warn'}">${isGpu(e) ? 'GPU' : 'CPU'}</span>` : '';
+  const chip = e => e ? `<span class="chip ${isGpu(e) ? 'ok' : 'warn'}">${isGpu(e) ? 'GPU' : e.device === 'cached' ? 'Cached' : e.device === 'ollama' ? 'Ollama' : e.device === 'unavailable' ? 'Unavailable' : 'CPU'}</span>` : '';
   const heads = [];
   if (t) heads.push(`${chip(t)} Whisper · ${esc(t.model || '')}`);
   if (r) heads.push(`${chip(r)} Encode · ${esc(r.encoder || r.label || '')}`);
@@ -2232,8 +2244,8 @@ function paintHw(d) {
   const g = d.gpu;
   const meter = (label, pct, text) => `<span class="meter">${label}<i><b style="width:${Math.min(100, pct || 0)}%"></b></i><em>${text}</em></span>`;
   slot.innerHTML = `<div class="hwrow">${heads.join('<span class="sep">·</span>') || '<span>Preparing engines…</span>'}</div>
-    <div class="hwrow meters">${g ? meter('GPU', g.percent, g.percent + '%') : ''}${g ? meter('VRAM', g.vram_percent, `${g.vram_used_gb}/${g.vram_total_gb} GB`) : ''}${meter('CPU', d.cpu.percent, d.cpu.percent + '%')}${meter('RAM', d.ram.percent, `${d.ram.used_gb}/${d.ram.total_gb} GB`)}</div>
-    ${fb ? `<div class="hw-warn">Fell back to CPU: ${esc(fb)}</div>` : ''}`;
+    <div class="hwrow meters">${g ? meter('GPU compute', g.percent, g.percent + '%') : ''}${g && g.encoder_percent != null ? meter('NVENC', g.encoder_percent, g.encoder_percent + '%') : ''}${g ? meter('VRAM', g.vram_percent, `${g.vram_used_gb}/${g.vram_total_gb} GB`) : ''}${meter('CPU', d.cpu.percent, d.cpu.percent + '%')}${meter('RAM', d.ram.percent, `${d.ram.used_gb}/${d.ram.total_gb} GB`)}</div>
+    ${fb ? `<div class="hw-warn">${[t, r].some(e => e?.device === 'cpu' && e.fallback) ? 'Fell back to CPU' : 'Engine notice'}: ${esc(fb)}</div>` : ''}`;
 }
 function hwStart() {
   hwStop();
@@ -2839,7 +2851,7 @@ function viewSettings() {
         <div class="card-head"><div><h3>Transcription</h3><p class="hint">Whisper turns speech into word-level timestamps.</p></div></div>
         <div class="form">
           <div class="field"><span class="fl">Whisper model</span>${sel('s-wmodel', [['auto', 'Auto (recommended)'], ['large-v3-turbo', 'large-v3-turbo (multilingual, fast)'], ['distil-large-v3', 'distil-large-v3 (English, fast)'], ['large-v3', 'large-v3 (best, slower)'], ['medium', 'medium'], ['small', 'small (CPU)']], s.whisper.model)}</div>
-          <div class="field"><span class="fl">Device</span>${sel('s-wdev', [['auto', 'Auto (GPU if available)'], ['cuda', 'GPU (CUDA)'], ['cpu', 'CPU']], s.whisper.device)}</div>
+          <div class="field"><span class="fl">Transcription device</span>${sel('s-wdev', [['auto', 'Auto (GPU if available)'], ['cuda', 'GPU (CUDA)'], ['cpu', 'CPU']], s.whisper.device)}</div>
           <div class="field"><span class="fl">Language</span>${sel('s-wlang', [['', 'Auto-detect'], ['en', 'English'], ['ar', 'العربية (Arabic)'], ['fr', 'Français'], ['es', 'Español'], ['de', 'Deutsch'], ['it', 'Italiano'], ['pt', 'Português']], s.whisper.language || '')}</div>
           <div class="field"><span class="fl">Accuracy</span>${sel('s-wqual', [['fast', 'Fast'], ['best', 'Best (large-v3 for non-English)']], s.whisper.quality || 'fast')}</div>
           <div class="field full"><p class="hint">The first run downloads the model (about 1–2 GB for turbo). Pre-fetch it to avoid waiting later.</p>
@@ -2872,6 +2884,7 @@ function viewSettings() {
         <div class="card-head"><h3>Rendering &amp; captions</h3></div>
         <div class="form">
           <div class="field"><span class="fl">Video encoder</span>${sel('s-enc', [['auto', 'Auto (recommended)'], ['h264_nvenc', 'NVIDIA GPU (NVENC), faster'], ['libx264', 'CPU (libx264), works everywhere']], s.render.encoder)}</div>
+          <div class="field full"><p class="hint">CUDA above runs speech recognition; NVENC runs video encoding. Select NVIDIA here for GPU renders, or CPU for software encoding. Layout analysis, captions and some filters still use the CPU. Check the NVENC meter, not only the GPU 3D graph. Explicit GPU choices fail visibly instead of silently switching to CPU.</p></div>
           <div class="field"><span class="fl">Caption font fallback</span><input class="txt" id="s-font" value="${esc(s.captions.font)}"></div>
           <div class="field full">${tog('s-loud', 'Normalize loudness', s.render.loudnorm, 'About −16 LUFS, so clips sit at a consistent volume.')}</div>
         </div>

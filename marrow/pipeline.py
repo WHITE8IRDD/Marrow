@@ -13,7 +13,7 @@ from .downloader import _find_source, fetch_source, prepare_source, resolve_sour
 from .highlight_scorer import OllamaScorer, llm_score
 from .models import Word
 from .renderer import render_clip
-from .transcriber import transcribe
+from .transcriber import release_gpu_model, transcribe
 from .utils import ensure_dir, log, probe_duration, require_ffmpeg, run_ffmpeg
 from . import hw
 
@@ -212,11 +212,14 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
         words, lang = transcribe(audio_path, wcfg["model"], wcfg["device"], wcfg["compute_type"],
                                  wcfg["language"], wcfg.get("beam_size", 1),
                                  wcfg.get("batch_size", 8), wcfg.get("quality", "fast"),
-                                 on_progress=tprog)
+                                 on_progress=tprog, on_status=lambda text: emit(text, 0.12))
         words = clean_words(words)
         _save_words(words_path, f"auto:{lang}" if wcfg["model"] == "auto" else wcfg["model"], words)
     else:
         words = clean_words(words)
+        hw.set_engine("transcribe", device="cached", model=wcfg["model"])
+        emit("Using cached transcript", 0.40)
+    release_gpu_model()
     tick("transcribe")
     if not words:
         raise ValueError("No speech was detected in this video.")
@@ -245,9 +248,9 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
 
     lcfg = cfg["llm"]
     llm_model = "qwen2.5:7b-instruct" if (lang or "").startswith("ar") else lcfg["model"]
-    scorer = OllamaScorer(llm_model, lcfg["host"], lcfg["timeout"]) if lcfg["enabled"] else None
+    scorer = OllamaScorer(llm_model, lcfg["host"], lcfg["timeout"], retries=0) if lcfg["enabled"] else None
     llm_ready = bool(scorer and scorer.available())
-    hw.set_engine("llm", device="gpu" if llm_ready else "off",
+    hw.set_engine("llm", device="ollama" if llm_ready else "off",
                   model=lcfg["model"] if llm_ready else None,
                   fallback=None if llm_ready else "Ollama unreachable or model not pulled")
     k = lcfg["max_candidates"] if llm_ready else clip["target_count"] * 4
@@ -256,12 +259,12 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
         "rank": n, "start": round(c.start, 2), "end": round(c.end, 2),
         "duration": round(c.end - c.start, 2), "score": round(c.heuristic, 4),
         "title": _fallback_title(c.text), "reason": "", "hashtags": [],
-        "status": "rendering", "files": {}, "render_pct": 0.0, "render_eta": None,
+        "status": "rendering", "files": {}, "render_pct": 0.0, "render_eta": None, "render_stage": "Waiting for ranking",
     } for n, c in enumerate(short[:clip["target_count"]], 1)]
     emit("Shortlisted candidate moments", 0.46, clips=prog_clips,
          counts={"moments": len(cands), "short": len(short)})
 
-    # 6. LLM judgment (cached, batched in groups of 20)
+    # 6. LLM judgment (cached, small batches with bounded failure handling)
     if llm_ready:
         cache_path = src.workdir / "llm_cache.json"
         cache = {}
@@ -269,15 +272,21 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
             cache = json.loads(cache_path.read_text(encoding="utf-8"))
         keys = [f"{llm_model}|{c.start:.2f}|{c.end:.2f}" for c in short]
         need = [i for i, (k, c) in enumerate(zip(keys, short)) if not cache.get(k)]
-        for g in range(0, len(need), 20):
-            group = need[g:g + 20]
+        for g in range(0, len(need), 4):
+            group = need[g:g + 4]
+            emit(f"Scoring clips with LLM · batch {g // 4 + 1}/{(len(need) + 3) // 4}",
+                 0.46 + 0.26 * g / max(1, len(need)))
             try:
                 got = scorer.batch_score([short[i].text for i in group], lang)
             except Exception:
                 got = [None] * len(group)
+            if not any(got):
+                emit("AI scoring unavailable · using heuristic scores", 0.72,
+                     log="AI batch failed or timed out; keeping heuristic scores for remaining windows.")
+                break
             for i, parsed in zip(group, got):
-                if parsed is None:  # batch miss: retry this window alone
-                    parsed = scorer.score(short[i].text, lang)
+                # A failed batch keeps heuristic scores. Retrying every window
+                # serially can turn one timeout into an hour-long apparent freeze.
                 if parsed:
                     cache[keys[i]] = parsed
         for n, (c, key) in enumerate(zip(short, keys), 1):
@@ -285,7 +294,7 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
             if parsed:
                 c.llm, c.llm_score = parsed, llm_score(parsed)
                 c.title, c.reason, c.hashtags = parsed["title"], parsed["reason"], parsed["hashtags"]
-            emit(f"Scoring clips with LLM ({n}/{len(short)})", 0.46 + 0.34 * n / len(short),
+            emit(f"Scoring clips with LLM ({n}/{len(short)})", 0.72 + 0.08 * n / len(short),
                  log=f"Scoring window {n}/{len(short)} [{c.start:.1f}s -> {c.end:.1f}s]" if parsed else None)
             if eta:
                 eta.update("score", n / len(short))
@@ -363,7 +372,7 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
                 title=c.title or _fallback_title(c.text), reason=c.reason,
                 hashtags=c.hashtags)
     del prog_clips[len(chosen):]
-    emit("Rendering clips", 0.80, clips=prog_clips)
+    emit("Scanning clip layouts", 0.80, clips=prog_clips)
     from . import layout as _layout
     from . import studio as _studio
 
@@ -376,12 +385,17 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
     for rank, c in enumerate(chosen, 1):
         s, e = padded_bounds(c, clip["pad_start"], clip["pad_end"], duration)
         clip_bounds[rank] = (s, e)
+        def layout_progress(detail, frac, rank=rank):
+            prog_clips[rank - 1]["render_stage"] = "Scanning layout · " + detail
+            emit(f"Scanning layout {rank}/{len(chosen)} · {detail}",
+                 0.80 + 0.05 * (rank - 1 + frac) / max(1, len(chosen)), clips=prog_clips)
+        layout_progress("Preparing", 0.0)
         try:
             clip_shots[rank] = _layout.analyze(
                 render_src, s, e, workdir=src.workdir,
                 split_screen=cfg["render"].get("split_screen", True),
                 speaker_mode=speaker_mode_value,
-                scan_src=scan_src,
+                scan_src=scan_src, on_progress=layout_progress,
                 fallback=cfg["render"].get("layout", "crop"))
         except Exception:
             log.exception("Shot analysis failed")
@@ -390,12 +404,13 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
                  if _studio.needs_segmented_render(clip_shots.get(rank))
                  and _studio.uniform_layout(clip_shots.get(rank)) is None}
     if seg_ranks:
-        emit(f"Smart layout: segmented render for clip(s) {sorted(seg_ranks)}", 0.80,
+        emit(f"Smart layout: segmented render for clip(s) {sorted(seg_ranks)}", 0.85,
              clips=prog_clips)
     elif any(_studio.uniform_layout(shots) for shots in clip_shots.values()):
-        emit("Smart layout: stacked two-up render", 0.80, clips=prog_clips)
+        emit("Smart layout: stacked two-up render", 0.85, clips=prog_clips)
     # Preview thumbs never need full resolution: the 480p scan source decodes
     # several times cheaper and the tiles are 270x480 anyway.
+    emit("Generating clip previews", 0.85, clips=prog_clips)
     try:
         _studio.make_clip_thumbs(scan_src or render_src,
                                  [(rank, clip_bounds[rank][0]) for rank in sorted(clip_bounds)],
@@ -414,6 +429,7 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
     workers = 2 if pick_encoder(cfg["render"].get("encoder", "auto")) == "h264_nvenc" else 1
     lock = threading.Lock()
     state = {"done": 0}
+    task_progress = {(rank, plat): 0.0 for rank, _, plat in tasks}
     finished = {}
 
     def one(task):
@@ -423,17 +439,25 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
             t_start = time.time()
             last_emit = [0.0]
 
+            with lock:
+                prog_clips[rank - 1]["render_stage"] = "Generating captions"
+                emit(f"Generating captions for clip {rank}/{len(chosen)} ({plat})",
+                     0.85 + 0.14 * sum(task_progress.values()) / max(1, len(tasks)), clips=prog_clips)
+
             def _bump(frac, left):
                 el = time.time() - t_start
                 with lock:
+                    task_progress[(rank, plat)] = frac
                     for pc in prog_clips:
                         if pc["rank"] == rank:
-                            pc["render_pct"] = round(frac, 3)
+                            pc["render_stage"] = "Rendering"
+                            fractions = [f for (rnk, _), f in task_progress.items() if rnk == rank]
+                            pc["render_pct"] = round(sum(fractions) / len(fractions), 3)
                             pc["render_eta"] = round(left, 1) if left is not None else None
                     if el - last_emit[0] > 2.0:
                         last_emit[0] = el
                         emit(f"Rendering clip {rank}/{len(chosen)} ({plat})",
-                             0.80 + 0.20 * state["done"] / max(1, len(tasks)), clips=prog_clips)
+                             0.85 + 0.14 * sum(task_progress.values()) / max(1, len(tasks)), clips=prog_clips)
 
             def rprog(frac):
                 el = time.time() - t_start
@@ -475,19 +499,24 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
             outcome = (None, None, None, e)
         with lock:
             state["done"] += 1
+            task_progress[(rank, plat)] = 1.0
             finished[(rank, plat)] = outcome
             d = state["done"]
             if outcome[3] is None:
                 for pc in prog_clips:
                     if pc["rank"] == rank:
-                        pc.setdefault("files", {})[plat] = outcome[2]
+                        for pl2 in render_plats:
+                            result = finished.get((rank, pl2))
+                            if result and result[3] is None:
+                                pc.setdefault("files", {})[pl2] = result[2]
                         if len(pc["files"]) >= len(render_plats):
-                            pc["status"] = "ready"
+                            pc.update(status="ready", render_pct=1.0, render_eta=0.0)
         if eta:
             eta.update("render", d / max(1, len(tasks)))
-        emit(f"Rendering clip {rank}/{len(chosen)} ({plat})", 0.80 + 0.20 * d / max(1, len(tasks)),
-             clips=prog_clips,
-             log=f"Rendered clip {rank}/{len(chosen)} ({plat})." if outcome[3] is None else None)
+        with lock:
+            emit(f"Rendering clip {rank}/{len(chosen)} ({plat})",
+                 0.85 + 0.14 * sum(task_progress.values()) / max(1, len(tasks)), clips=prog_clips,
+                 log=f"Rendered clip {rank}/{len(chosen)} ({plat})." if outcome[3] is None else None)
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
         list(ex.map(one, tasks))
@@ -519,6 +548,7 @@ def run_pipeline(source, output_dir="output", config_path="config.yaml", clip_co
             "shots": clip_shots.get(rank),
         })
 
+    emit("Finalizing clips", 0.99)
     _write_manifest(output_dir, src, source, results)
     xs = duration / max(t_stage.get("transcribe", 0.0), 0.01) if t_stage.get("transcribe") else 0.0
     log.info("Timings: download %s · audio %s · transcribe %s (%.1fx) · score %s · render %s · total %s",

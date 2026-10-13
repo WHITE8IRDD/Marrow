@@ -217,7 +217,7 @@ def render_clip(video_path, start, end, ass_path, output_path, config, platform=
 
     args = [
         "-ss", f"{start:.3f}", "-i", video_path, "-t", f"{end - start:.3f}",
-        "-filter_complex", graph, "-map", "[v]", "-map", "0:a?",
+        "-filter_complex_threads", "4", "-filter_complex", graph, "-map", "[v]", "-map", "0:a?",
         *venc,
         "-c:a", "aac", "-b:a", "160k",
     ]
