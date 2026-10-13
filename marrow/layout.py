@@ -75,6 +75,10 @@ SPLIT_PERSIST_FRAC = 0.25  # forced two-up also accepts a face seen in ~1/4 of a
 # middle of a face-framed one.
 SEPARATION = 0.13
 SPLIT_SEPARATION = 0.10  # forced two-up: closer than this and it is one person twice
+# Detected pair rescue: a pair between 0.05 W and SPLIT_SEPARATION is framed
+# instead of handed to motion anchoring. Duplicate-merge radius is
+# max(0.35 * face_w, 0.05 * W), so a 0.05 W rescue bar sits just above it.
+SPLIT_RESCUE_SEPARATION = 0.05
 MIN_COEXISTENCE = 0.50 # both faces must be visible in the same frame for half the samples
 MIN_STACK_SECONDS = 2.5 # skip fleeting detections and shot/reverse-shot transitions
 CACHE_VERSION = 7      # bumped with the auto-centering panel geometry
@@ -1131,6 +1135,16 @@ def analyze(src, start, end, prefer=None, workdir=None, split_screen=True,
             if len(faces) >= 2:
                 pair = _select_split_pair(faces, W, len(fr), min_coexistence=0.0,
                                           min_sep=SPLIT_SEPARATION)
+                if pair is None:
+                    # When the detector saw both people but they sit between 0.05 W
+                    # and SPLIT_SEPARATION, frame the detected pair directly instead
+                    # of handing the shot to motion anchoring — which put a panel on
+                    # a shoulder and left one half with no face at all.
+                    # Rationale: duplicate-merge radius is max(0.35 * face_w, 0.05 * W),
+                    # so a 0.05 W rescue bar sits just above it and one person still
+                    # cannot fill two panels.
+                    pair = _select_split_pair(faces, W, len(fr), min_coexistence=0.0,
+                                              min_sep=SPLIT_RESCUE_SEPARATION)
             anchors = pair
             if anchors is None and fr:
                 # The detector missed one of the speakers (a turned head, a face
