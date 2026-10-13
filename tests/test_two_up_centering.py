@@ -647,3 +647,52 @@ def test_rendered_real_faces_sit_on_their_panel_centrelines(tmp_path):
         assert abs(offset) <= 0.05, f"speaker {half} sits {offset:+.3f} off centre"
         widths.append(face[2] / crop.shape[1])
     assert abs(widths[0] - widths[1]) <= 0.08, widths      # framed at the same size
+
+
+@pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")),
+                    reason="ffmpeg not installed")
+@needs_model
+def test_two_up_frames_a_close_pair_it_detected_instead_of_guessing(tmp_path):
+    """When speakers sit closer than SPLIT_SEPARATION (0.10 W) but >= 0.05 W,
+    two-up must frame the detected pair instead of guessing with motion anchoring.
+
+    Motion anchoring put a panel on a shoulder and left one half with no face at
+    all; framing the detected pair centres both speakers within panel tolerance.
+    """
+    import cv2
+    from marrow.config import load_config
+
+    still = tmp_path / "close_twoshot.png"
+    cv2.imwrite(str(still), synth_two_shot(880, 1050, face_w=0.075))
+    video = tmp_path / "close_twoshot.mp4"
+    studio.run_ffmpeg(["-loop", "1", "-i", str(still), "-t", "2", "-r", "25",
+                       "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
+                       "-pix_fmt", "yuv420p", video])
+
+    cfg = load_config()
+    cfg["render"].update(speaker_mode="two_up", encoder="libx264", preset="ultrafast",
+                         crf=30, loudnorm=False)
+    cfg["captions"]["enabled"] = False
+    cfg["platforms"]["shorts"].update(res_x=540, res_y=960)
+    shots = L.analyze(str(video), 0.0, 2.0, workdir=tmp_path, speaker_mode="two_up")
+    assert shots[0]["views"] == "faces", shots[0]
+
+    out = tmp_path / "out.mp4"
+    R.render_clip(str(video), 0.0, 2.0, None, out, cfg, "shorts",
+                  layout=shots[0]["layout"], shot=shots[0])
+    assert out.stat().st_size > 5_000
+
+    cap = cv2.VideoCapture(str(out))
+    ok, rendered = cap.read()
+    cap.release()
+    assert ok and rendered.shape[:2] == (960, 540)
+    det = L.get_second_detector()
+    ph = 960 // 2
+    for half in (0, 1):
+        crop = rendered[half * ph:(half + 1) * ph]
+        faces = _detect(crop, det, min_frac=0.03)
+        assert faces, f"no speaker found in half {half}"
+        face = max(faces, key=lambda f: f[2])
+        offset = (face[0] + face[2] / 2 - crop.shape[1] / 2) / crop.shape[1]
+        assert abs(offset) <= 0.05, f"speaker {half} sits {offset:+.3f} off centre"
+
