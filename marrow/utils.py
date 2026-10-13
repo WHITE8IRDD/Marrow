@@ -55,45 +55,93 @@ def require_ffmpeg():
             )
 
 
-def run_ffmpeg(args, cwd=None):
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"] + [str(a) for a in args]
+def run_ffmpeg(args, cwd=None, timeout=1800):
+    cmd = ["ffmpeg", "-nostdin", "-y", "-hide_banner", "-loglevel", "error"] + [str(a) for a in args]
     try:
         return subprocess.run(cmd, check=True, capture_output=True, text=True, cwd=cwd,
-                              encoding="utf-8", errors="replace")
+                              encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"ffmpeg timed out after {timeout}s. Check the source file and encoder.") from e
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"ffmpeg failed:\n{e.stderr}") from e
 
 
-def run_ffmpeg_progress(args, total_sec, on_progress, cwd=None):
-    """Like run_ffmpeg, but reports 0..1 fraction via ffmpeg's progress pipe."""
-    import threading
+def run_ffmpeg_progress(args, total_sec, on_progress, cwd=None, stall_timeout=180):
+    """Report encoded media time, drain both pipes and bound stalled encoders.
 
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+    Reader threads keep a blocked readline off the worker. A callback exception
+    (including cancellation) must terminate/reap the encoder, not orphan it.
+    """
+    import threading
+    import time
+    from collections import deque
+    from queue import Empty, Queue
+
+    cmd = ["ffmpeg", "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
            "-progress", "pipe:1", "-nostats"] + [str(a) for a in args]
     p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          text=True, encoding="utf-8", errors="replace")
-    err = []
+    events, err = Queue(), deque(maxlen=40)
+
+    def read_progress():
+        try:
+            for line in p.stdout:
+                events.put(line)
+        finally:
+            events.put(None)
 
     def drain():
-        try:
-            err.append(p.stderr.read())
-        except Exception:
-            pass
+        for line in p.stderr:
+            err.append(line[-2000:])
 
-    threading.Thread(target=drain, daemon=True).start()   # drain stderr (avoids deadlock)
+    readers = [threading.Thread(target=read_progress, daemon=True),
+               threading.Thread(target=drain, daemon=True)]
+    for reader in readers:
+        reader.start()
+    last_advance, media_us, frac = time.monotonic(), -1, 0.0
     try:
-        for line in p.stdout:
+        on_progress(0.0)
+        while True:
+            try:
+                line = events.get(timeout=min(1.0, stall_timeout))
+            except Empty:
+                line = ""
+            if line is None:
+                break
             if line.startswith("out_time_us="):
                 try:
-                    us = int(line.strip().split("=")[1])
+                    us = int(line.strip().split("=", 1)[1])
                 except ValueError:
-                    continue
-                if us >= 0 and total_sec > 0:
-                    on_progress(max(0.0, min(1.0, us / 1e6 / total_sec)))
+                    us = -1
+                if us > media_us:
+                    media_us, last_advance = us, time.monotonic()
+                    if total_sec > 0:
+                        frac = max(0.0, min(0.99, us / 1e6 / total_sec))
+            if time.monotonic() - last_advance > stall_timeout:
+                raise RuntimeError(f"ffmpeg stalled: no encoded frames/audio progress for "
+                                   f"{stall_timeout}s. Check the source and NVIDIA driver, "
+                                   "or retry with the CPU encoder.\n" + "".join(err)[-1500:])
+            on_progress(frac)
+        try:
+            code = p.wait(timeout=stall_timeout)
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError("ffmpeg stalled while finalizing the output.") from e
+        readers[1].join(timeout=2)
+        if code != 0:
+            raise RuntimeError("ffmpeg failed:\n" + "".join(err)[-1500:])
+        on_progress(1.0)
     finally:
+        if p.poll() is None:
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+        for reader in readers:
+            reader.join(timeout=2)
         p.stdout.close()
-    if p.wait() != 0:
-        raise RuntimeError("ffmpeg failed:\n" + "".join(err)[-1500:])
+        p.stderr.close()
 
 
 _DURATION_CACHE = {}

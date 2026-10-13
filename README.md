@@ -114,6 +114,38 @@ upscale — so the sharp scaler stayed. The real lever is the encoder
 (`render.encoder: h264_nvenc` on an NVIDIA card); the NVENC preset/tune/CQ values
 in Settings are applied to both normal renders and exports.
 
+
+### Device selection and live progress
+
+Transcription and video encoding have separate settings:
+
+| Operation | CPU | NVIDIA GPU |
+|---|---|---|
+| Speech recognition | Transcription device → CPU | Transcription device → GPU (CUDA) |
+| Video rendering / export | Video encoder → CPU (libx264) | Video encoder → NVIDIA GPU (NVENC) |
+
+Explicit encoder choices apply at **every export resolution**, including 1440p.
+Auto may fall back to CPU; explicit GPU choices surface failures instead. NVENC is
+NVIDIA's dedicated video encoder, not CUDA/3D compute: watch the **NVENC** meter
+(or Windows Task Manager → GPU → Video Encode), not just the 3D graph. Scanning,
+caption composition and software filters still use CPU, even with NVENC selected.
+Cached transcripts need no inference and are labeled **Cached**. Ollama controls
+its own CPU/GPU placement; Marrow does not claim GPU use just because it is reachable.
+
+The progress card now separates **Prepare → Transcribe → Rank → Scan → Render → Finish**,
+with model loading, scene scanning, speaker tracking and caption generation details.
+Render progress includes partial clips and all segments/platforms. FFmpeg jobs
+with no media-time advancement for 180 seconds fail with a useful message instead
+of waiting forever; other FFmpeg tasks have a 30-minute ceiling. The scan's pause
+control pauses **the preview**, including automatic seeking; background processing
+continues, as its tooltip states.
+
+Layout sampling stops at the requested clip boundary and bounds retained frame
+resolution. Scene-cut detection uses a small video-only stream, and complex filter
+threads are bounded to avoid oversubscribing the CPU during parallel GPU encodes.
+AI scoring uses batches of four with no per-window retry cascade: failed windows
+retain heuristic scores, and a wholly failed batch skips further AI requests.
+
 A forced two-up clip renders in a single pass when every shot is frame-view
 stacked (no per-shot segments, no concat step); segment rendering is only used
 when the panel geometry actually changes inside a clip.
@@ -169,8 +201,10 @@ clips perform best well under the cap, so the default `clip.max_duration` is 60 
   purpose — use Force two-up), and that the YuNet model downloaded (Settings → System check shows
   whether OpenCV and the model are ready; without them only Force two-up can stack, and it uses the
   frame's own halves).
-- **GPU or CUDA/DLL errors**: Marrow exposes pip-installed CUDA libraries automatically and retries
-  on CPU when the GPU is unusable (the UI shows the reason). For GPU speed on NVIDIA cards, install:
+- **GPU or CUDA/DLL errors**: In **Auto** mode, Marrow retries on CPU when CUDA is unusable
+  and shows the reason. Explicit **GPU (CUDA)** mode instead fails with diagnostic details;
+  it never silently starts a CPU transcription. CUDA DLL directory handles are kept alive
+  on Windows. For GPU speed on NVIDIA cards, install:
   `pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"` (cuDNN 9 needs ctranslate2 ≥ 4.5).
   Or set `whisper.device: cpu` to stay on CPU. See faster-whisper's README for details.
 - **6 GB VRAM**: Whisper is unloaded before the LLM runs. If Ollama still runs out of memory,

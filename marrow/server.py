@@ -4,6 +4,7 @@ a single background worker, and a static single-page app in marrow/web/index.htm
 Run:  marrow-ui   or   python -m marrow.server
 """
 import argparse
+import copy
 import importlib.util
 import json
 import logging
@@ -360,6 +361,7 @@ class App:
                 "last_error": c.get("last_error"), "platforms": list(files),
                 "style": c.get("style"),
                 "render_pct": c.get("render_pct", 0.0), "render_eta": c.get("render_eta"),
+                "render_stage": c.get("render_stage"),
                 "urls": {pl: f"/media/{vid}/{fn}?v={rev}" for pl, fn in files.items()},
                 "thumb": f"/media/{vid}/{thumb}?v={rev}" if thumb else None,
                 "shots": c.get("shots"),
@@ -368,6 +370,7 @@ class App:
         thumb = next((c["thumb"] for c in clips if c["thumb"]), None)
         keys = ("id", "name", "source", "source_kind", "status", "stage", "progress", "created",
                 "started", "finished", "error", "video_id", "settings", "engine", "eta_sec", "eta_at",
+                "stage_since", "updated_at",
                 "locked")
         out = {k: p.get(k) for k in keys}
         out.update(clips=clips, thumb=thumb,
@@ -694,7 +697,11 @@ class App:
             if pid in self.cancel:
                 raise Cancelled()
             with self.lock:
-                p["stage"], p["progress"] = stage, round(float(frac), 3)
+                now = time.time()
+                if p.get("stage") != stage:
+                    p["stage_since"] = now
+                p["updated_at"] = now
+                p["stage"], p["progress"] = stage, round(max(p.get("progress", 0), float(frac)), 3)
                 hw.set_stage(stage)
                 if log:
                     L = p.setdefault("log", [])
@@ -705,7 +712,7 @@ class App:
                 if candidates is not None:
                     p["candidates"] = candidates
                 if clips is not None:
-                    p["clips"] = clips
+                    p["clips"] = copy.deepcopy(clips)
                 if counts is not None:
                     p["counts"] = counts
                 e = eta_holder.get("eta")

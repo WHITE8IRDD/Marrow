@@ -16,6 +16,7 @@ psutil.cpu_percent(None)  # prime
 def reset():
     with _lock:
         _engine.clear()
+        _stage.update(name=None, since=None)
 
 
 def set_engine(kind, **info):
@@ -26,7 +27,8 @@ def set_engine(kind, **info):
 
 def set_stage(name):
     with _lock:
-        _stage.update(name=name, since=time.time())
+        if _stage["name"] != name:
+            _stage.update(name=name, since=time.time())
 
 
 def get_engine():

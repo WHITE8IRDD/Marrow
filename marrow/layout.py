@@ -229,7 +229,7 @@ def detect_shots(src, start=0.0, end=None):
     args = ["-ss", f"{max(0.0, start):.3f}", "-i", str(src)]
     if end is not None:
         args += ["-t", f"{max(0.1, end - start):.3f}"]
-    args += ["-vf", "select='gte(scene,0.35)',showinfo", "-f", "null", "-"]
+    args += ["-an", "-sn", "-dn", "-vf", "scale=320:-2,select='gte(scene,0.35)',showinfo", "-f", "null", "-"]
     cmd = ["ffmpeg", "-y", "-hide_banner", "-v", "info"] + [str(a) for a in args]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
@@ -245,7 +245,7 @@ def detect_shots(src, start=0.0, end=None):
     return sorted(cuts)
 
 
-def sample_frames(src, start, end, fps=SAMPLE_FPS):
+def sample_frames(src, start, end, fps=SAMPLE_FPS, max_width=None):
     """(t, bgr frame) samples, via ONE forward decode (no repeated random seeks).
 
     Frames between two samples are stepped over with ``grab()`` and only the ones
@@ -281,11 +281,20 @@ def sample_frames(src, start, end, fps=SAMPLE_FPS):
             t = (pos_ms / 1000.0 - 1.0 / fps_src) if pos_ms > 0 else (frame_no - 1) / fps_src
             if not math.isfinite(t) or t <= last_t:
                 t = max(last_t + 1.0 / fps_src, (frame_no - 1) / fps_src)
-            if t + tolerance >= target and t < end:
+            # A seek can land beyond the window (VFR/keyframe rounding).
+            # Never decode the rest of a multi-hour source waiting for target.
+            if t >= end:
+                break
+            last_t = t
+            if t + tolerance >= target:
                 if frame is None:               # grabbed only: convert it now
                     ok, frame = cap.retrieve()
                     if not ok or frame is None:
                         break
+                if max_width and frame.shape[1] > max_width:
+                    h, w = frame.shape[:2]
+                    frame = cv2.resize(frame, (max_width, max(2, round(h * max_width / w))),
+                                       interpolation=cv2.INTER_AREA)
                 out.append((max(0.0, t), frame))
                 last_t = t
                 target += step
@@ -571,7 +580,7 @@ def _fallback_shots(start, end, fallback, mode):
 
 
 def analyze(src, start, end, prefer=None, workdir=None, split_screen=True,
-            fallback="blur_fit", speaker_mode=None, scan_src=None):
+            fallback="blur_fit", speaker_mode=None, scan_src=None, on_progress=None):
     """Per-shot layouts for [start, end]. Returns [{start, end, layout, ...}].
 
     ``speaker_mode`` is 'auto' (default), 'two_up' or 'off'; ``split_screen``
@@ -618,6 +627,8 @@ def analyze(src, start, end, prefer=None, workdir=None, split_screen=True,
             except (OSError, ValueError, TypeError):
                 pass
 
+    if on_progress:
+        on_progress("Loading face detector", 0.0)
     det = get_detector()
     if det is None:
         return _fallback_shots(start, end, fallback, mode)
@@ -644,9 +655,19 @@ def analyze(src, start, end, prefer=None, workdir=None, split_screen=True,
             src_probe.release()
         scan_scale = (SW / W) if W else 1.0
 
+    if on_progress:
+        on_progress("Detecting scene cuts", 0.1)
     cuts = [c for c in detect_shots(scan, start, end) if start < c < end]
     bounds = [start] + cuts + [end]
-    samples = sample_frames(scan, start, end)
+    if on_progress:
+        on_progress("Sampling frames", 0.3)
+    # Keep a 4K clip's samples from consuming gigabytes while the proxy builds.
+    if W > DETECT_MAX_WIDTH:
+        samples = sample_frames(scan, start, end, max_width=DETECT_MAX_WIDTH)
+        scan_scale *= W / DETECT_MAX_WIDTH
+        H, W = max(2, round(H * DETECT_MAX_WIDTH / W)), DETECT_MAX_WIDTH
+    else:
+        samples = sample_frames(scan, start, end)
     rms = None
     if workdir is not None:                       # cached audio energy gates the mouth motion
         try:
@@ -665,6 +686,9 @@ def analyze(src, start, end, prefer=None, workdir=None, split_screen=True,
 
     shots = []
     for i in range(len(bounds) - 1):
+        if on_progress:
+            on_progress(f"Tracking speakers · shot {i + 1}/{len(bounds) - 1}",
+                        0.5 + 0.5 * i / max(1, len(bounds) - 1))
         s0, s1 = bounds[i], bounds[i + 1]
         fr = by_shot.get(i, [])
         dets = [(t, detect_faces(frame, det)) for t, frame in fr]

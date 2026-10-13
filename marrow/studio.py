@@ -230,9 +230,9 @@ def render_clip_shots(cfg, media, workdir, words, rank, start, end, plats, out_d
     if uniform_layout(shots):
         # Same composition everywhere: render once instead of segment + concat.
         return _render_single_layout(cfg, media, workdir, words, rank, start, end,
-                                     plats, out_dir, captions_on, uniform_layout(shots))
+                                     plats, out_dir, captions_on, uniform_layout(shots), on_progress)
     segs = normalize_shots(shots, start, end, cfg["render"]["layout"])
-    total_dur = max(0.1, end - start)
+    total_dur = max(0.1, (end - start) * len(plats))
     done = [0.0]
 
     def seg_prog(frac, seg_s, seg_e):
@@ -261,6 +261,7 @@ def render_clip_shots(cfg, media, workdir, words, rank, start, end, plats, out_d
                         layout=sg["layout"] if sg["layout"] in ("stacked", "face") else None,
                         shot=seg_shot if sg["layout"] in ("stacked", "face") else None)
             parts.append(seg_out)
+            done[0] += sg["end"] - sg["start"]
         final = out_dir / f"clip_{rank:02d}_{plat}.mp4"
         tmp = final.with_name(final.stem + ".part.mp4")
         lst = tmpdir / "list.txt"
@@ -307,7 +308,7 @@ def render_clip_files(cfg, source, workdir, words, rank, start, end, platforms, 
 
 
 def _render_single_layout(cfg, source, workdir, words, rank, start, end, platforms, out_dir,
-                          captions_on, layout):
+                          captions_on, layout, on_progress=None):
     """One encode per platform with a fixed layout (used by forced two-up)."""
     from .caption_styles import ensure_fonts
     from .captioner import generate_ass
@@ -317,7 +318,7 @@ def _render_single_layout(cfg, source, workdir, words, rank, start, end, platfor
     ass_dir.mkdir(parents=True, exist_ok=True)
     ensure_fonts(ass_dir)
     produced = {}
-    for plat in platforms:
+    for plat_index, plat in enumerate(platforms):
         pcfg = cfg["platforms"][plat]
         ass_path = None
         if captions_on:
@@ -326,7 +327,9 @@ def _render_single_layout(cfg, source, workdir, words, rank, start, end, platfor
                          pcfg["res_x"], pcfg["res_y"], pcfg["caption_margin_v"])
         final = Path(out_dir) / f"clip_{rank:02d}_{plat}.mp4"
         tmp = part_path(final)
-        render_clip(source, start, end, ass_path, tmp, cfg, plat, layout=layout)
+        render_clip(source, start, end, ass_path, tmp, cfg, plat, layout=layout,
+                    on_progress=(lambda f: on_progress((plat_index + f) / len(platforms)))
+                    if on_progress else None)
         os.replace(tmp, final)
         produced[plat] = final
     return produced
@@ -347,6 +350,10 @@ def pick_export_encoder(height, cfg_enc):
     """hevc_nvenc for 1440p+ when supported, else the normal render pick."""
     from .renderer import pick_encoder
 
+    # An explicit CPU/GPU choice applies at every resolution. Only Auto may
+    # choose a different codec or fall back to software.
+    if cfg_enc in ("libx264", "h264_nvenc"):
+        return pick_encoder(cfg_enc)
     if height and height > 1080:
         global _hevc_ok
         if _hevc_ok is None:
@@ -445,7 +452,7 @@ def export_clip(cfg, media, workdir, words, rank, start, end, spec, out_path,
             graph += f";[{vlabel[1:-1]}]fps={fps_cap}[y]"
             vlabel = "[y]"
         args = ["-ss", f"{s:.3f}", "-i", str(Path(media).resolve()),
-                "-t", f"{e - s:.3f}", "-filter_complex", graph,
+                "-t", f"{e - s:.3f}", "-filter_complex_threads", "4", "-filter_complex", graph,
                 "-map", vlabel, "-map", "0:a?", *venc,
                 "-c:a", "aac", "-b:a", f"{ab}k" if ab > 0 else "160k"]
         if cfg["render"].get("loudnorm", True):
