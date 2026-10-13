@@ -175,20 +175,23 @@ function closeModal() {
   const r = $('#modal-root');
   const mv = $('#modalPrev', r);
   const hp = $('#homePrev');
+  const wasOpen = !!r.querySelector('.prev-modal-wrap');
+  const modalWasPlaying = !!(wasOpen && mv && !mv.paused);   // read before pausing
+  // Tear the expanded copy down *first*: exactly one of the two previews may be
+  // playing (and audible) at any moment, including across this swap.
+  backdropStop($('#modalPrevBg', r));
+  $$('video', r).forEach(v => v.pause());
   if (mv && hp) {
     try {
       hp.currentTime = mv.currentTime;
       const bg = $('#homePrevBg');
-      if (bg) bg.currentTime = mv.currentTime;
-      if (!mv.paused) {
+      if (modalWasPlaying || homeWasPlaying) {
         hp.play().catch(() => {});
-        bg?.play().catch(() => {});
+        backdropStart(hp, bg);
         updatePlayButtonIcons(false);
       }
     } catch (_) {}
   }
-  const v = $('video', r);
-  if (v) v.pause();
   r.innerHTML = '';
   editCtx = null;
   refreshLiveOverlay = null;
@@ -200,8 +203,8 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     const mv = $('#modalPrev'), mvb = $('#modalPrevBg');
     if (mv) {
-      if (mv.paused) { mv.play().catch(() => {}); mvb?.play().catch(() => {}); }
-      else { mv.pause(); mvb?.pause(); }
+      if (mv.paused) { mv.play().catch(() => {}); backdropStart(mv, mvb); }
+      else { mv.pause(); backdropStop(mvb); }
     }
   }
 });
@@ -219,6 +222,60 @@ function confirmBox({ title, text, ok = 'Confirm', danger = false, check = null 
 const seg = (key, items, val) => `<div class="seg" data-opt="${key}">${items.map(([v, l]) =>
   `<button type="button" class="${v === val ? 'on' : ''}" data-v="${v}" data-act="seg">${l}</button>`).join('')}</div>`;
 const tog = (key, label, on, hint) => `<label class="tog"><input type="checkbox" data-opt="${key}" ${on ? 'checked' : ''}><span class="knob"></span><span class="tl">${label}${hint ? `<small>${hint}</small>` : ''}</span></label>`;
+
+/* ---------- multi-speaker framing (auto / force two-up / off) ---------- */
+/* The three modes are the real setting; split_screen stays the payload key (and
+   is still read as a boolean) so older projects and API clients keep working. */
+const SPEAKER_MODES = ['auto', 'two_up', 'off'];
+const SPEAKER_COPY = {
+  auto: ['Auto — two-shot only', 'Stacks top/bottom only when two people are really on screen together; shot/reverse-shot stays solo.'],
+  two_up: ['Force two-up', 'Always stacks two views: the two faces when both are visible, otherwise the frame’s own left and right halves.'],
+  off: ['Off', 'Never stacks. Every shot uses the fallback framing above.']
+};
+/* Mirrors marrow.layout.normalize_speaker_mode so the UI and the renderer always
+   agree on what a value means (aliases included). */
+const TWO_UP_ALIASES = ['two_up', 'twoup', 'force', 'force_two_up', 'forced', 'split', 'stack', 'stacked'];
+const ON_WORDS = ['on', 'yes', 'true', '1'];
+const OFF_WORDS = ['off', 'none', 'no', 'false', '0', 'null'];
+const word = raw => (raw === undefined || raw === null ? '' : String(raw).trim().toLowerCase().replace(/-/g, '_'));
+const asMode = raw => {
+  const v = word(raw);
+  if (SPEAKER_MODES.includes(v)) return v;
+  if (TWO_UP_ALIASES.includes(v)) return 'two_up';
+  return null;
+};
+const asLegacy = raw => {
+  const v = word(raw);
+  if (SPEAKER_MODES.includes(v)) return v;
+  if (OFF_WORDS.includes(v)) return 'off';
+  if (ON_WORDS.includes(v)) return 'auto';
+  if (TWO_UP_ALIASES.includes(v)) return 'two_up';
+  return null;
+};
+function modeOf(o) {
+  const raw = o?.speaker_mode;
+  if (typeof raw === 'boolean') return raw ? 'auto' : 'off';
+  const mode = asMode(raw);
+  if (mode) return mode;
+  const legacy = o?.split_screen;
+  if (typeof legacy === 'boolean') return legacy ? 'auto' : 'off';
+  if (typeof legacy === 'number') return legacy ? 'auto' : 'off';
+  return asLegacy(legacy) || 'auto';
+}
+const speakerModeHTML = (o, status, statusText) => {
+  const mode = modeOf(o);
+  const [title, hint] = SPEAKER_COPY[mode];
+  return `<div class="speaker-mode" data-mode="${mode}">
+    <div class="seg wide" data-opt="split_screen" role="group" aria-label="Multi-speaker framing">
+      <button type="button" class="${mode === 'auto' ? 'on' : ''}" data-v="auto" data-act="seg" title="Stack only genuine two-shots">Auto</button>
+      <button type="button" class="${mode === 'two_up' ? 'on' : ''}" data-v="two_up" data-act="seg" title="Force two-up — always stack two views">Two-up</button>
+      <button type="button" class="${mode === 'off' ? 'on' : ''}" data-v="off" data-act="seg" title="Never stack">Off</button>
+    </div>
+    <span class="speaker-diagram" aria-hidden="true"><i></i><i></i></span>
+    <span class="tl"><b>${title}</b><small>${hint}</small></span>
+    <span class="mode-status ${status || 'pending'}"><i aria-hidden="true"></i>${esc(statusText || '')}</span>
+  </div>`;
+};
 
 const FONT_OPTIONS = [
   'Montserrat ExtraBold',
@@ -290,8 +347,8 @@ function styleSectionHTML(preset) {
       <aside class="home-style-preview" aria-label="Caption preview">
         <div class="home-preview-heading"><div><span class="home-mini-label">LIVE PREVIEW</span><p>On your source footage</p></div><span class="home-preview-format">9:16</span></div>
         <div class="phone preview-phone layout-crop" id="homePhone" role="region" aria-label="Real-time video preview">
-          <video id="homePrevBg" class="prev-bg" muted playsinline loop preload="auto"></video>
-          <video id="homePrev" class="prev-fg" muted playsinline loop preload="auto"></video>
+          <canvas id="homePrevBg" class="prev-bg" aria-hidden="true"></canvas>
+          <video id="homePrev" class="prev-fg" muted playsinline loop preload="metadata"></video>
           <div class="phone-placeholder" id="homePrevPlaceholder">
             <div class="ph-backdrop"><div class="ph-glow"></div><div class="ph-grid"></div></div>
             <div class="ph-badge">${ico('sparkle')}<span>Live Preview</span></div>
@@ -340,13 +397,7 @@ function optsPanel(o, compact) {
     <div class="opt-group"><span class="fl">Fallback framing</span>${seg('layout', [['crop', 'Center crop'], ['blur_fit', 'Blur fit']], o.layout)}</div>
     <div class="opt-group">
       <span class="fl">Multi-speaker framing</span>
-      <label class="speaker-mode">
-        <input type="checkbox" data-opt="split_screen" ${o.split_screen === false ? '' : 'checked'} aria-label="Enable split-screen for multi-speaker scenes">
-        <span class="speaker-diagram" aria-hidden="true"><i></i><i></i></span>
-        <span class="tl"><b>Stack both speakers</b><small>Co-present two-shots use top/bottom panels; solo cuts stay face-tracked.</small></span>
-        <span class="mode-status ${visionReady ? 'ready' : (s && !vision.opencv ? 'missing' : 'pending')}"><i aria-hidden="true"></i>${esc(visionHint)}</span>
-        <span class="knob"></span>
-      </label>
+      ${speakerModeHTML(o, visionReady ? 'ready' : (s && !vision.opencv ? 'missing' : 'pending'), visionHint)}
     </div>
     <div class="opt-group"><span class="fl">Number of clips</span>
       <div class="stepper"><button type="button" class="icon sm" data-step="clips" data-d="-1" aria-label="Fewer clips">${ico('minus')}</button>
@@ -641,6 +692,10 @@ function updateHomePreview() {
   const optBox = document.getElementById('optbox') || document;
   const o = readOpts(optBox);
   const st = getResolvedStyle(root);
+  const mode = modeOf(o);
+  // The framing card lives with the options, not with the phone preview: keep it
+  // in step even when the preview is not on screen (e.g. the regenerate dialog).
+  syncSpeakerModeCopy(optBox, mode);
 
   // 1. Small phone preview
   const phone = document.getElementById('homePhone');
@@ -648,11 +703,14 @@ function updateHomePreview() {
     const isBlurFit = (o.layout === 'blur_fit');
     phone.classList.toggle('layout-blur_fit', isBlurFit);
     phone.classList.toggle('layout-crop', !isBlurFit);
-    phone.classList.toggle('split-enabled', o.split_screen !== false);
+    phone.classList.toggle('split-enabled', mode !== 'off');
+    phone.classList.toggle('split-forced', mode === 'two_up');
     phone.classList.toggle('has-zoom', !!o.zoom && !isBlurFit);
 
     const frameBadge = document.getElementById('prevFrameBadge');
-    if (frameBadge) frameBadge.textContent = o.split_screen !== false ? 'Auto split' : (isBlurFit ? 'Blur Fit' : 'Crop');
+    if (frameBadge) frameBadge.textContent = mode === 'two_up' ? 'Two-up'
+      : mode === 'auto' ? 'Auto split' : (isBlurFit ? 'Blur Fit' : 'Crop');
+    if (isBlurFit) homeBackdropStart();       // the mirror is only shown in blur fit
     
     const styleBadge = document.getElementById('prevStyleBadge');
     if (styleBadge) styleBadge.textContent = st.label || st.presetKey || 'Style';
@@ -667,7 +725,8 @@ function updateHomePreview() {
     const isBlurFit = (o.layout === 'blur_fit');
     modalPhone.classList.toggle('layout-blur_fit', isBlurFit);
     modalPhone.classList.toggle('layout-crop', !isBlurFit);
-    modalPhone.classList.toggle('split-enabled', o.split_screen !== false);
+    modalPhone.classList.toggle('split-enabled', mode !== 'off');
+    modalPhone.classList.toggle('split-forced', mode === 'two_up');
     modalPhone.classList.toggle('has-zoom', !!o.zoom && !isBlurFit);
 
 
@@ -676,8 +735,73 @@ function updateHomePreview() {
   }
 }
 
+function syncSpeakerModeCopy(root, mode) {
+  const box = $('.speaker-mode', root || document);
+  if (!box) return;
+  const [title, hint] = SPEAKER_COPY[mode] || SPEAKER_COPY.auto;
+  box.dataset.mode = mode;
+  const b = $('.tl b', box), small = $('.tl small', box);
+  if (b) b.textContent = title;
+  if (small) small.textContent = hint;
+  const segBox = $('.seg', box);
+  if (segBox) $$('button', segBox).forEach(x => x.classList.toggle('on', x.dataset.v === mode));
+}
+
 function repaintHomeCap() {
   updateHomePreview();
+}
+
+/* The blurred backdrop is a low-resolution canvas mirror of the foreground
+   video, not a second <video>: one file, one decode, and the CSS blur hides the
+   ~9 fps refresh. It only paints while the layer is actually displayed. */
+const backdropState = new WeakMap();      // canvas -> {video, timer}
+const BACKDROP_W = 160, BACKDROP_MS = 110;
+
+function backdropVisible(canvas) {
+  return !!(canvas.offsetWidth || canvas.offsetHeight || canvas.getClientRects().length);
+}
+
+function backdropPaint(video, canvas) {
+  const ctx = canvas.getContext && canvas.getContext('2d');
+  if (!ctx || !video.videoWidth) return;
+  const w = BACKDROP_W;
+  const h = Math.max(2, Math.round(w * (video.videoHeight || 9) / (video.videoWidth || 16)));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  try { ctx.drawImage(video, 0, 0, w, h); } catch (_) {}
+}
+
+function backdropStop(canvas) {
+  const st = canvas && backdropState.get(canvas);
+  if (st && st.timer) clearTimeout(st.timer);
+  if (canvas) backdropState.delete(canvas);
+}
+
+function backdropStart(video, canvas) {
+  if (!video || !canvas || typeof canvas.getContext !== 'function') return;
+  backdropStop(canvas);
+  const st = { video, timer: 0 };
+  backdropState.set(canvas, st);
+  const tick = () => {
+    if (backdropState.get(canvas) !== st) return;         // replaced or stopped
+    if (video.paused || !video.isConnected) { backdropStop(canvas); return; }
+    if (backdropVisible(canvas)) backdropPaint(video, canvas);
+    st.timer = setTimeout(tick, BACKDROP_MS);
+  };
+  backdropPaint(video, canvas);
+  tick();
+}
+
+function homeBackdrop() {
+  return [document.getElementById('homePrev'), document.getElementById('homePrevBg')];
+}
+
+function homeBackdropStart() {
+  const [fg, bg] = homeBackdrop();
+  backdropStart(fg, bg);
+}
+
+function homeBackdropStop() {
+  backdropStop(document.getElementById('homePrevBg'));
 }
 
 function setPreviewMedia(url) {
@@ -685,20 +809,65 @@ function setPreviewMedia(url) {
   const bg = document.getElementById('homePrevBg');
   const ph = document.getElementById('homePrevPlaceholder');
   const note = document.getElementById('homePrevNote');
-  
+
   if (fg) {
+    fg.preload = 'auto';
     fg.src = url;
-    fg.currentTime = 0;
+    try { fg.currentTime = 0; } catch (_) {}
     fg.play().catch(() => {});
+    homeBackdropStart();                 // mirror the frame we are about to play
   }
   if (bg) {
-    bg.src = url;
-    bg.currentTime = 0;
-    bg.play().catch(() => {});
+    const ctx = bg.getContext && bg.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, bg.width, bg.height);
   }
   if (ph) ph.classList.add('hidden');
   if (note) note.hidden = true;
+  watchPreviewVisibility();
   updateHomePreview();
+}
+
+/* Previews only decode while they are on screen: the Home phone pauses when it
+   scrolls out of view and resumes when it comes back (unless the expanded
+   preview is open, which owns playback then). Clip cards do the same for any
+   card that leaves the viewport mid-hover. */
+let homeWasPlaying = false;
+function watchPreviewVisibility() {
+  const phone = document.getElementById('homePhone');
+  if (!phone || typeof IntersectionObserver !== 'function') return;
+  if (phone.dataset.prevIO === '1') return;
+  phone.dataset.prevIO = '1';
+  const io = new IntersectionObserver(entries => {
+    for (const en of entries) {
+      const [fg, bg] = homeBackdrop();
+      if (!fg) continue;
+      if (en.isIntersecting) {
+        if (homeWasPlaying && !document.getElementById('modalPrev')) {
+          fg.play().catch(() => {});
+          backdropStart(fg, bg);
+          updatePlayButtonIcons(false);
+        }
+      } else {
+        homeWasPlaying = !fg.paused;
+        fg.pause();
+        backdropStop(bg);
+        updatePlayButtonIcons(true);
+      }
+    }
+  }, { threshold: 0.15 });
+  io.observe(phone);
+}
+const cardObserver = (typeof IntersectionObserver === 'function')
+  ? new IntersectionObserver(entries => {
+      for (const en of entries) {
+        if (en.isIntersecting) continue;
+        const v = en.target.querySelector('video');
+        if (v && !v.paused) { v.pause(); try { v.currentTime = 0; } catch (_) {} }
+      }
+    }, { threshold: 0.05 })
+  : null;
+function watchCardVisibility(el) {
+  if (cardObserver && el) cardObserver.observe(el);
 }
 
 function clearPreviewMedia() {
@@ -707,15 +876,15 @@ function clearPreviewMedia() {
   const ph = document.getElementById('homePrevPlaceholder');
   const note = document.getElementById('homePrevNote');
   
+  homeBackdropStop();
   if (fg) {
     fg.pause();
     fg.removeAttribute('src');
     fg.load();
   }
   if (bg) {
-    bg.pause();
-    bg.removeAttribute('src');
-    bg.load();
+    const ctx = bg.getContext && bg.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, bg.width, bg.height);
   }
   if (ph) ph.classList.remove('hidden');
   if (note) note.hidden = false;
@@ -728,11 +897,11 @@ function toggleHomePrevPlay() {
   if (!fg) return;
   if (fg.paused) {
     fg.play().catch(() => {});
-    bg?.play().catch(() => {});
+    homeBackdropStart();
     updatePlayButtonIcons(false);
   } else {
     fg.pause();
-    bg?.pause();
+    homeBackdropStop();
     updatePlayButtonIcons(true);
   }
 }
@@ -768,15 +937,12 @@ function setupHomePreviewEvents() {
   const fg = document.getElementById('homePrev');
   const bg = document.getElementById('homePrevBg');
   if (fg && bg) {
-    fg.onplay = () => { bg.play().catch(() => {}); updatePlayButtonIcons(false); };
-    fg.onpause = () => { bg.pause(); updatePlayButtonIcons(true); };
-    fg.ontimeupdate = () => {
-      if (Math.abs(bg.currentTime - fg.currentTime) > 0.25) {
-        bg.currentTime = fg.currentTime;
-      }
-    };
-    fg.onseeking = () => { bg.currentTime = fg.currentTime; };
-    fg.onseeked = () => { bg.currentTime = fg.currentTime; };
+    // The backdrop is painted from fg, so there is nothing to keep in sync:
+    // only the mirror loop has to follow play/pause/seek.
+    fg.onplay = () => { homeBackdropStart(); updatePlayButtonIcons(false); };
+    fg.onpause = () => { homeBackdropStop(); updatePlayButtonIcons(true); };
+    fg.onseeking = () => backdropPaint(fg, bg);
+    fg.onseeked = () => backdropPaint(fg, bg);
   }
 
   const playBtn = document.getElementById('homePrevPlayBtn');
@@ -823,8 +989,8 @@ function openPreviewModal() {
     <div class="prev-modal-body">
       <div class="prev-modal-stage" id="modalStage">
         <div class="phone prev-modal-phone ${isBlurFit ? 'layout-blur_fit' : 'layout-crop'} ${hasZoom ? 'has-zoom' : ''}" id="modalPhone">
-          <video id="modalPrevBg" class="prev-bg" muted playsinline loop preload="auto"></video>
-          <video id="modalPrev" class="prev-fg" playsinline loop preload="auto"></video>
+          <canvas id="modalPrevBg" class="prev-bg" aria-hidden="true"></canvas>
+          <video id="modalPrev" class="prev-fg" playsinline loop preload="metadata"></video>
           <div class="phone-placeholder ${src ? 'hidden' : ''}" id="modalPlaceholder">
             <div class="ph-backdrop"><div class="ph-glow"></div><div class="ph-grid"></div></div>
             <div class="ph-badge">${ico('sparkle')}<span>Live Preview</span></div>
@@ -851,15 +1017,19 @@ function openPreviewModal() {
   const mvb = $('#modalPrevBg', m);
   
   if (src && mv && mvb) {
+    // Park the Home preview first (its position is handed to the modal below):
+    // between them only the expanded view decodes and only one of them makes
+    // sound. closeModal() gives the time and the playing state back.
+    homeWasPlaying = !!(hp && !hp.paused);
+    if (hp) hp.pause();
+    homeBackdropStop();
+    mv.preload = 'auto';
     mv.src = src;
-    mvb.src = src;
     const curTime = hp ? hp.currentTime : 0;
     mv.currentTime = curTime;
-    mvb.currentTime = curTime;
     mv.muted = hp ? hp.muted : true;
-    mvb.muted = true;
     mv.play().catch(() => {});
-    mvb.play().catch(() => {});
+    backdropStart(mv, mvb);
   }
   
   const chips = $('#modalChips', m);
@@ -905,13 +1075,11 @@ function openPreviewModal() {
   }
 
   if (mv) {
-    mv.addEventListener('timeupdate', () => {
-      updateModalTransport();
-      if (mvb && Math.abs(mvb.currentTime - mv.currentTime) > 0.25) mvb.currentTime = mv.currentTime;
-    });
+    mv.addEventListener('timeupdate', updateModalTransport);
     mv.addEventListener('loadedmetadata', updateModalTransport);
-    mv.addEventListener('play', () => { mvb?.play().catch(() => {}); updateModalPlayBtn(); });
-    mv.addEventListener('pause', () => { mvb?.pause(); updateModalPlayBtn(); });
+    mv.addEventListener('seeked', () => backdropPaint(mv, mvb));
+    mv.addEventListener('play', () => { backdropStart(mv, mvb); updateModalPlayBtn(); });
+    mv.addEventListener('pause', () => { backdropStop(mvb); updateModalPlayBtn(); });
   }
 
   if (scrub) {
@@ -919,7 +1087,6 @@ function openPreviewModal() {
       if (!mv || !mv.duration) return;
       const targetTime = (Number(scrub.value) / 100) * mv.duration;
       mv.currentTime = targetTime;
-      if (mvb) mvb.currentTime = targetTime;
       if (curTimeEl) curTimeEl.textContent = fmtT(targetTime);
     };
   }
@@ -927,8 +1094,8 @@ function openPreviewModal() {
   if (playBtn) {
     playBtn.onclick = () => {
       if (!mv) return;
-      if (mv.paused) { mv.play().catch(() => {}); mvb?.play().catch(() => {}); }
-      else { mv.pause(); mvb?.pause(); }
+      if (mv.paused) { mv.play().catch(() => {}); backdropStart(mv, mvb); }
+      else { mv.pause(); backdropStop(mvb); }
       updateModalPlayBtn();
     };
   }
@@ -1249,7 +1416,7 @@ const Home = { probeId: null, timer: null, probeReady: false, probeFailed: false
 const FOUND_KEY = 'marrowFound';   // the fetched link + probe id, kept for the tab so a reload or a page switch doesn't refetch
 const LINK_RE = /^https?:\/\/[^\s/]+\.[^\s]+/i;
 function viewHome() {
-  if (!state.opts) state.opts = state.settings ? state.settings.job_defaults : { clips: 5, duration: 45, platform: 'shorts', layout: 'crop', split_screen: true, captions: true, use_llm: true, zoom: false, caption_style: { preset: 'bold-pop', overrides: {} } };
+  if (!state.opts) state.opts = state.settings ? state.settings.job_defaults : { clips: 5, duration: 45, platform: 'shorts', layout: 'crop', speaker_mode: 'auto', split_screen: true, captions: true, use_llm: true, zoom: false, caption_style: { preset: 'bold-pop', overrides: {} } };
   const s = state.system;
   main.innerHTML = `
   ${s && !s.ffmpeg ? `<div class="banner bad">${ico('alert')}<div>FFmpeg wasn’t found, so clips can’t be rendered. Install it (Windows: <code>winget install ffmpeg</code>), open a new terminal and restart Marrow.</div></div>` : ''}
@@ -1693,7 +1860,7 @@ function viewProject() {
       <section class="card scan" id="scan" data-state="idle" hidden>
         <header class="scan-head"><span class="scan-title">${ico('sparkle')}<b>Live analysis</b></span><span class="pill" id="scanPill">Idle</span></header>
         <div class="scan-stage">
-          <video id="scanVideo" muted playsinline preload="auto"></video>
+          <video id="scanVideo" muted playsinline preload="metadata"></video>
           <div class="scan-grid"></div><div class="scan-sweep"></div>
           <div class="scan-top"><span class="scan-chip label" id="scanLabel">Scanning content</span><span class="scan-chip live"><i></i>Live</span></div>
           <div class="scan-bottom">
@@ -1814,6 +1981,7 @@ function paintProject(p, force) {
       const old = have.get(String(c.rank));
       if (old && old.dataset.sig === sig) return;
       const eln = cardEl(p, c, sig);
+      watchCardVisibility(eln);
       if (old) old.replaceWith(eln); else grid.appendChild(eln);
     });
     const waiting = grid.querySelector('.waiting'); if (waiting) waiting.remove();

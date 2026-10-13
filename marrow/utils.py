@@ -96,10 +96,31 @@ def run_ffmpeg_progress(args, total_sec, on_progress, cwd=None):
         raise RuntimeError("ffmpeg failed:\n" + "".join(err)[-1500:])
 
 
+_DURATION_CACHE = {}
+
+
 def probe_duration(path) -> float:
+    """Media duration in seconds, memoised per (file, size, mtime).
+
+    A probe costs ~60 ms of process start-up and one pipeline run asks for the
+    same duration several times (source, proxy, audio) - the UI asks again on
+    every export. Re-probing an unchanged file is pure overhead, so the result is
+    cached until the file changes.
+    """
+    key = os.fspath(path)
+    try:
+        st = os.stat(key)
+        token = (st.st_size, st.st_mtime_ns)
+    except OSError:
+        token = None
+    if token is not None and _DURATION_CACHE.get(key, (None, None))[0] == token:
+        return _DURATION_CACHE[key][1]
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+         "-of", "default=noprint_wrappers=1:nokey=1", key],
         check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
-    return float(out.stdout.strip())
+    duration = float(out.stdout.strip())
+    if token is not None:
+        _DURATION_CACHE[key] = (token, duration)
+    return duration

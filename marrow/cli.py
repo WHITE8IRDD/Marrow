@@ -18,8 +18,11 @@ def main(argv=None):
     parser.add_argument("--duration", type=int, default=None, help="Target clip length in seconds (+/- 10)")
     parser.add_argument("--platform", choices=["shorts", "reels", "both"], default="shorts")
     parser.add_argument("--layout", choices=["crop", "blur_fit"], default=None)
+    parser.add_argument("--speaker-mode", choices=["auto", "two_up", "off"], default=None,
+                        help="Multi-speaker framing: auto (verified two-shots only), "
+                             "two_up (force top/bottom panels from two distinct views), off")
     parser.add_argument("--no-split-screen", action="store_true",
-                        help="Disable automatic stacked framing for verified two-speaker shots")
+                        help="Legacy alias for --speaker-mode off")
     parser.add_argument("--no-llm", action="store_true", help="Skip Ollama; rank by audio/heuristics")
     parser.add_argument("--force", action="store_true", help="Ignore cached transcript and scores")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -41,6 +44,7 @@ def main(argv=None):
         platform=args.platform,
         layout=args.layout,
         split_screen=False if args.no_split_screen else None,
+        speaker_mode=args.speaker_mode,
         use_llm=False if args.no_llm else None,
         force=args.force,
     )

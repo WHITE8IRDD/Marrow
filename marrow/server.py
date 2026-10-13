@@ -27,6 +27,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import __version__, hw, probe, studio
 from .config import deep_merge, load_config
 from .downloader import VIDEO_SUFFIXES, _find_source
+from .layout import speaker_mode_for as _layout_speaker_mode
 from .utils import atomic_copy, ensure_dir, log, probe_duration, slugify
 
 mimetypes.add_type("font/ttf", ".ttf")  # Windows registry often lacks this; @font-face needs it
@@ -164,12 +165,18 @@ def clean_job_settings(raw):
     if "uppercase" in cs:
         legacy_ov["uppercase"] = bool(cs.get("uppercase"))
     merged_ov = {**legacy_ov, **clean_overrides(cs.get("overrides"))}
+    from .layout import normalize_speaker_mode
+
+    # speaker_mode is the real setting; split_screen stays in the payload (and is
+    # still accepted from older clients) as the legacy boolean view of it.
+    mode = normalize_speaker_mode(raw.get("speaker_mode"), raw.get("split_screen", True))
     return {
         "clips": _int(raw.get("clips"), 1, 20, 5),
         "duration": _int(raw.get("duration"), 15, 170, 45),
         "platform": raw.get("platform") if raw.get("platform") in ("shorts", "reels", "both") else "shorts",
         "layout": raw.get("layout") if raw.get("layout") in ("crop", "blur_fit") else "crop",
-        "split_screen": bool(raw.get("split_screen", True)),
+        "speaker_mode": mode,
+        "split_screen": mode != "off",
         "captions": bool(raw.get("captions", True)),
         "use_llm": bool(raw.get("use_llm", True)),
         "zoom": bool(raw.get("zoom", False)),
@@ -181,9 +188,14 @@ def clean_job_settings(raw):
 
 
 def job_overrides(s):
+    from .layout import normalize_speaker_mode
+
+    # A job written by an older version only carries the split_screen boolean;
+    # translating it here keeps every older payload behaving exactly as before.
+    mode = normalize_speaker_mode(s.get("speaker_mode"), s.get("split_screen", True))
     return {
         "captions": {"enabled": s["captions"], **s["caption_style"]},
-        "render": {"split_screen": s.get("split_screen", True)},
+        "render": {"speaker_mode": mode, "split_screen": mode != "off"},
         "zoom": {"enabled": s["zoom"]},
     }
 
@@ -223,6 +235,10 @@ def clean_global_settings(raw):
         "render": {
             "encoder": r.get("encoder") if r.get("encoder") in ("auto", "libx264", "h264_nvenc") else "auto",
             "loudnorm": bool(r.get("loudnorm", True)),
+            "nvenc_preset": r.get("nvenc_preset") if r.get("nvenc_preset") in
+                            [f"p{i}" for i in range(1, 8)] else "p5",
+            "nvenc_tune": r.get("nvenc_tune") if r.get("nvenc_tune") in ("hq", "ll", "ull") else "hq",
+            "nvenc_cq": _int(r.get("nvenc_cq"), 15, 35, 21),
         },
         "captions": {"font": (str(c.get("font") or "").strip()[:60] or "Arial"),
                      "min_gap": pace},
@@ -592,6 +608,7 @@ class App:
         clip_shots = _layout.analyze(
             media, c["start"], c["end"], workdir=self.work / p["video_id"],
             split_screen=cfg["render"].get("split_screen", True),
+            speaker_mode=_layout_speaker_mode(cfg["render"]),
             fallback=cfg["render"].get("layout", "crop"))
         clip_shots = studio.apply_shot_overrides(clip_shots, c.get("shot_layouts"))
         image = studio.render_caption_preview(cfg, media, self.work / p["video_id"], words,
@@ -705,7 +722,8 @@ class App:
                 source, output_dir=str(self.out), config=cfg, clip_count=settings["clips"],
                 clip_duration=settings["duration"], platform=settings["platform"],
                 layout=settings["layout"], use_llm=settings["use_llm"],
-                split_screen=settings.get("split_screen", True), progress=progress,
+                split_screen=settings.get("split_screen", True),
+                speaker_mode=settings.get("speaker_mode"), progress=progress,
                 on_source=have_source, eta_holder=eta_holder,
             )
             if "eta" in eta_holder:
@@ -805,6 +823,7 @@ class App:
                 shots = _layout.analyze(
                     media, start, end, workdir=workdir,
                     split_screen=cfg["render"].get("split_screen", True),
+                    speaker_mode=_layout_speaker_mode(cfg["render"]),
                     fallback=cfg["render"].get("layout", "crop"))
                 if fr in ("stacked", "face"):
                     shots = studio.apply_shot_overrides(shots, {str(i): fr for i in range(len(shots))})
@@ -1174,6 +1193,9 @@ class App:
                        "reachable": False, "model_ready": False, "models": []},
             "gpu": False,
             "gpu_error": None,
+            "gpu_name": None,
+            "engines": {},          # what the *current/last* run actually used
+            "stage": None,
         }
         try:  # YouTube setup: yt-dlp version, JavaScript runtime, solver and cookies
             from . import diagnostics
@@ -1190,6 +1212,13 @@ class App:
             info["gpu_error"] = why or None
         except Exception as e:
             info["gpu_error"] = f"{type(e).__name__}: {e}"
+        try:  # the GPU the machine *has* vs the engines a run is actually using
+            snap = hw.snapshot()
+            info["gpu_name"] = (snap.get("gpu") or {}).get("name")
+            info["engines"] = snap.get("engines") or {}
+            info["stage"] = (snap.get("stage") or {}).get("name")
+        except Exception:
+            pass
         try:
             from .renderer import pick_encoder
 
@@ -1216,7 +1245,8 @@ class App:
             "version": __version__, "home": str(self.home),
             "settings": {"whisper": {k: cfg["whisper"].get(k) for k in ("model", "device", "language", "quality")},
                          "llm": {k: cfg["llm"][k] for k in ("enabled", "model", "host")},
-                         "render": {k: cfg["render"][k] for k in ("encoder", "loudnorm")},
+                         "render": {k: cfg["render"].get(k) for k in
+                                    ("encoder", "loudnorm", "nvenc_preset", "nvenc_tune", "nvenc_cq")},
                          "captions": {"font": cfg["captions"]["font"],
                                       "min_gap": cfg["captions"].get("min_gap", 0.22)},
                          "cookies": {"from_browser": cfg["cookies"].get("from_browser", ""),
@@ -1227,6 +1257,7 @@ class App:
                 "caption_style": {"preset": cfg["captions"].get("preset", "bold-pop"),
                                   "overrides": {}},
                 "use_llm": cfg["llm"]["enabled"],
+                "speaker_mode": _layout_speaker_mode(cfg["render"]),
                 "split_screen": cfg["render"].get("split_screen", True)}),
         }
 
