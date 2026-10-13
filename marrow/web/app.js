@@ -179,15 +179,15 @@ function closeModal() {
   const modalWasPlaying = !!(wasOpen && mv && !mv.paused);   // read before pausing
   // Tear the expanded copy down *first*: exactly one of the two previews may be
   // playing (and audible) at any moment, including across this swap.
+  backdropStop($('#modalPrevBg', r));
   $$('video', r).forEach(v => v.pause());
   if (mv && hp) {
     try {
       hp.currentTime = mv.currentTime;
       const bg = $('#homePrevBg');
-      if (bg) bg.currentTime = mv.currentTime;
       if (modalWasPlaying || homeWasPlaying) {
         hp.play().catch(() => {});
-        bg?.play().catch(() => {});
+        backdropStart(hp, bg);
         updatePlayButtonIcons(false);
       }
     } catch (_) {}
@@ -203,8 +203,8 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     const mv = $('#modalPrev'), mvb = $('#modalPrevBg');
     if (mv) {
-      if (mv.paused) { mv.play().catch(() => {}); mvb?.play().catch(() => {}); }
-      else { mv.pause(); mvb?.pause(); }
+      if (mv.paused) { mv.play().catch(() => {}); backdropStart(mv, mvb); }
+      else { mv.pause(); backdropStop(mvb); }
     }
   }
 });
@@ -268,7 +268,7 @@ const speakerModeHTML = (o, status, statusText) => {
   return `<div class="speaker-mode" data-mode="${mode}">
     <div class="seg wide" data-opt="split_screen" role="group" aria-label="Multi-speaker framing">
       <button type="button" class="${mode === 'auto' ? 'on' : ''}" data-v="auto" data-act="seg" title="Stack only genuine two-shots">Auto</button>
-      <button type="button" class="${mode === 'two_up' ? 'on' : ''}" data-v="two_up" data-act="seg" title="Always stack two views">Force two-up</button>
+      <button type="button" class="${mode === 'two_up' ? 'on' : ''}" data-v="two_up" data-act="seg" title="Force two-up — always stack two views">Two-up</button>
       <button type="button" class="${mode === 'off' ? 'on' : ''}" data-v="off" data-act="seg" title="Never stack">Off</button>
     </div>
     <span class="speaker-diagram" aria-hidden="true"><i></i><i></i></span>
@@ -347,7 +347,7 @@ function styleSectionHTML(preset) {
       <aside class="home-style-preview" aria-label="Caption preview">
         <div class="home-preview-heading"><div><span class="home-mini-label">LIVE PREVIEW</span><p>On your source footage</p></div><span class="home-preview-format">9:16</span></div>
         <div class="phone preview-phone layout-crop" id="homePhone" role="region" aria-label="Real-time video preview">
-          <video id="homePrevBg" class="prev-bg" muted playsinline loop preload="metadata"></video>
+          <canvas id="homePrevBg" class="prev-bg" aria-hidden="true"></canvas>
           <video id="homePrev" class="prev-fg" muted playsinline loop preload="metadata"></video>
           <div class="phone-placeholder" id="homePrevPlaceholder">
             <div class="ph-backdrop"><div class="ph-glow"></div><div class="ph-grid"></div></div>
@@ -710,6 +710,7 @@ function updateHomePreview() {
     const frameBadge = document.getElementById('prevFrameBadge');
     if (frameBadge) frameBadge.textContent = mode === 'two_up' ? 'Two-up'
       : mode === 'auto' ? 'Auto split' : (isBlurFit ? 'Blur Fit' : 'Crop');
+    if (isBlurFit) homeBackdropStart();       // the mirror is only shown in blur fit
     
     const styleBadge = document.getElementById('prevStyleBadge');
     if (styleBadge) styleBadge.textContent = st.label || st.presetKey || 'Style';
@@ -750,20 +751,75 @@ function repaintHomeCap() {
   updateHomePreview();
 }
 
+/* The blurred backdrop is a low-resolution canvas mirror of the foreground
+   video, not a second <video>: one file, one decode, and the CSS blur hides the
+   ~9 fps refresh. It only paints while the layer is actually displayed. */
+const backdropState = new WeakMap();      // canvas -> {video, timer}
+const BACKDROP_W = 160, BACKDROP_MS = 110;
+
+function backdropVisible(canvas) {
+  return !!(canvas.offsetWidth || canvas.offsetHeight || canvas.getClientRects().length);
+}
+
+function backdropPaint(video, canvas) {
+  const ctx = canvas.getContext && canvas.getContext('2d');
+  if (!ctx || !video.videoWidth) return;
+  const w = BACKDROP_W;
+  const h = Math.max(2, Math.round(w * (video.videoHeight || 9) / (video.videoWidth || 16)));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  try { ctx.drawImage(video, 0, 0, w, h); } catch (_) {}
+}
+
+function backdropStop(canvas) {
+  const st = canvas && backdropState.get(canvas);
+  if (st && st.timer) clearTimeout(st.timer);
+  if (canvas) backdropState.delete(canvas);
+}
+
+function backdropStart(video, canvas) {
+  if (!video || !canvas || typeof canvas.getContext !== 'function') return;
+  backdropStop(canvas);
+  const st = { video, timer: 0 };
+  backdropState.set(canvas, st);
+  const tick = () => {
+    if (backdropState.get(canvas) !== st) return;         // replaced or stopped
+    if (video.paused || !video.isConnected) { backdropStop(canvas); return; }
+    if (backdropVisible(canvas)) backdropPaint(video, canvas);
+    st.timer = setTimeout(tick, BACKDROP_MS);
+  };
+  backdropPaint(video, canvas);
+  tick();
+}
+
+function homeBackdrop() {
+  return [document.getElementById('homePrev'), document.getElementById('homePrevBg')];
+}
+
+function homeBackdropStart() {
+  const [fg, bg] = homeBackdrop();
+  backdropStart(fg, bg);
+}
+
+function homeBackdropStop() {
+  backdropStop(document.getElementById('homePrevBg'));
+}
+
 function setPreviewMedia(url) {
   const fg = document.getElementById('homePrev');
   const bg = document.getElementById('homePrevBg');
   const ph = document.getElementById('homePrevPlaceholder');
   const note = document.getElementById('homePrevNote');
 
-  // The two layers share one file; the backdrop only starts fetching once the
-  // foreground can actually play, so opening Home does not pull two streams.
-  for (const v of [fg, bg]) {
-    if (!v) continue;
-    v.preload = 'auto';
-    v.src = url;
-    try { v.currentTime = 0; } catch (_) {}
-    v.play().catch(() => {});
+  if (fg) {
+    fg.preload = 'auto';
+    fg.src = url;
+    try { fg.currentTime = 0; } catch (_) {}
+    fg.play().catch(() => {});
+    homeBackdropStart();                 // mirror the frame we are about to play
+  }
+  if (bg) {
+    const ctx = bg.getContext && bg.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, bg.width, bg.height);
   }
   if (ph) ph.classList.add('hidden');
   if (note) note.hidden = true;
@@ -783,19 +839,18 @@ function watchPreviewVisibility() {
   phone.dataset.prevIO = '1';
   const io = new IntersectionObserver(entries => {
     for (const en of entries) {
-      const fg = document.getElementById('homePrev');
-      const bg = document.getElementById('homePrevBg');
+      const [fg, bg] = homeBackdrop();
       if (!fg) continue;
       if (en.isIntersecting) {
         if (homeWasPlaying && !document.getElementById('modalPrev')) {
           fg.play().catch(() => {});
-          bg?.play().catch(() => {});
+          backdropStart(fg, bg);
           updatePlayButtonIcons(false);
         }
       } else {
         homeWasPlaying = !fg.paused;
         fg.pause();
-        bg?.pause();
+        backdropStop(bg);
         updatePlayButtonIcons(true);
       }
     }
@@ -821,15 +876,15 @@ function clearPreviewMedia() {
   const ph = document.getElementById('homePrevPlaceholder');
   const note = document.getElementById('homePrevNote');
   
+  homeBackdropStop();
   if (fg) {
     fg.pause();
     fg.removeAttribute('src');
     fg.load();
   }
   if (bg) {
-    bg.pause();
-    bg.removeAttribute('src');
-    bg.load();
+    const ctx = bg.getContext && bg.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, bg.width, bg.height);
   }
   if (ph) ph.classList.remove('hidden');
   if (note) note.hidden = false;
@@ -842,11 +897,11 @@ function toggleHomePrevPlay() {
   if (!fg) return;
   if (fg.paused) {
     fg.play().catch(() => {});
-    bg?.play().catch(() => {});
+    homeBackdropStart();
     updatePlayButtonIcons(false);
   } else {
     fg.pause();
-    bg?.pause();
+    homeBackdropStop();
     updatePlayButtonIcons(true);
   }
 }
@@ -882,15 +937,12 @@ function setupHomePreviewEvents() {
   const fg = document.getElementById('homePrev');
   const bg = document.getElementById('homePrevBg');
   if (fg && bg) {
-    fg.onplay = () => { bg.play().catch(() => {}); updatePlayButtonIcons(false); };
-    fg.onpause = () => { bg.pause(); updatePlayButtonIcons(true); };
-    fg.ontimeupdate = () => {
-      if (Math.abs(bg.currentTime - fg.currentTime) > 0.25) {
-        bg.currentTime = fg.currentTime;
-      }
-    };
-    fg.onseeking = () => { bg.currentTime = fg.currentTime; };
-    fg.onseeked = () => { bg.currentTime = fg.currentTime; };
+    // The backdrop is painted from fg, so there is nothing to keep in sync:
+    // only the mirror loop has to follow play/pause/seek.
+    fg.onplay = () => { homeBackdropStart(); updatePlayButtonIcons(false); };
+    fg.onpause = () => { homeBackdropStop(); updatePlayButtonIcons(true); };
+    fg.onseeking = () => backdropPaint(fg, bg);
+    fg.onseeked = () => backdropPaint(fg, bg);
   }
 
   const playBtn = document.getElementById('homePrevPlayBtn');
@@ -937,7 +989,7 @@ function openPreviewModal() {
     <div class="prev-modal-body">
       <div class="prev-modal-stage" id="modalStage">
         <div class="phone prev-modal-phone ${isBlurFit ? 'layout-blur_fit' : 'layout-crop'} ${hasZoom ? 'has-zoom' : ''}" id="modalPhone">
-          <video id="modalPrevBg" class="prev-bg" muted playsinline loop preload="metadata"></video>
+          <canvas id="modalPrevBg" class="prev-bg" aria-hidden="true"></canvas>
           <video id="modalPrev" class="prev-fg" playsinline loop preload="metadata"></video>
           <div class="phone-placeholder ${src ? 'hidden' : ''}" id="modalPlaceholder">
             <div class="ph-backdrop"><div class="ph-glow"></div><div class="ph-grid"></div></div>
@@ -968,21 +1020,16 @@ function openPreviewModal() {
     // Park the Home preview first (its position is handed to the modal below):
     // between them only the expanded view decodes and only one of them makes
     // sound. closeModal() gives the time and the playing state back.
-    const homeBg = document.getElementById('homePrevBg');
     homeWasPlaying = !!(hp && !hp.paused);
     if (hp) hp.pause();
-    if (homeBg) homeBg.pause();
+    homeBackdropStop();
     mv.preload = 'auto';
-    mvb.preload = 'auto';
     mv.src = src;
-    mvb.src = src;
     const curTime = hp ? hp.currentTime : 0;
     mv.currentTime = curTime;
-    mvb.currentTime = curTime;
     mv.muted = hp ? hp.muted : true;
-    mvb.muted = true;
     mv.play().catch(() => {});
-    mvb.play().catch(() => {});
+    backdropStart(mv, mvb);
   }
   
   const chips = $('#modalChips', m);
@@ -1028,13 +1075,11 @@ function openPreviewModal() {
   }
 
   if (mv) {
-    mv.addEventListener('timeupdate', () => {
-      updateModalTransport();
-      if (mvb && Math.abs(mvb.currentTime - mv.currentTime) > 0.25) mvb.currentTime = mv.currentTime;
-    });
+    mv.addEventListener('timeupdate', updateModalTransport);
     mv.addEventListener('loadedmetadata', updateModalTransport);
-    mv.addEventListener('play', () => { mvb?.play().catch(() => {}); updateModalPlayBtn(); });
-    mv.addEventListener('pause', () => { mvb?.pause(); updateModalPlayBtn(); });
+    mv.addEventListener('seeked', () => backdropPaint(mv, mvb));
+    mv.addEventListener('play', () => { backdropStart(mv, mvb); updateModalPlayBtn(); });
+    mv.addEventListener('pause', () => { backdropStop(mvb); updateModalPlayBtn(); });
   }
 
   if (scrub) {
@@ -1042,7 +1087,6 @@ function openPreviewModal() {
       if (!mv || !mv.duration) return;
       const targetTime = (Number(scrub.value) / 100) * mv.duration;
       mv.currentTime = targetTime;
-      if (mvb) mvb.currentTime = targetTime;
       if (curTimeEl) curTimeEl.textContent = fmtT(targetTime);
     };
   }
@@ -1050,8 +1094,8 @@ function openPreviewModal() {
   if (playBtn) {
     playBtn.onclick = () => {
       if (!mv) return;
-      if (mv.paused) { mv.play().catch(() => {}); mvb?.play().catch(() => {}); }
-      else { mv.pause(); mvb?.pause(); }
+      if (mv.paused) { mv.play().catch(() => {}); backdropStart(mv, mvb); }
+      else { mv.pause(); backdropStop(mvb); }
       updateModalPlayBtn();
     };
   }

@@ -510,8 +510,11 @@ def test_home_exposes_the_three_modes_and_keeps_the_legacy_key():
     assert 'data-opt="split_screen"' in js                    # old clients/tests keep finding it
     for mode in ("auto", "two_up", "off"):
         assert f'data-v="{mode}"' in js
-    for label in ("Auto", "Force two-up", "Off"):
+    # Short labels that fit the segmented control; the full wording lives in the
+    # explanation under it (and in the button's title attribute).
+    for label in ('>Auto<', '>Two-up<', '>Off<'):
         assert label in js
+    assert "Force two-up" in js
     assert "modeOf" in js and "syncSpeakerModeCopy" in js
 
 
@@ -701,3 +704,29 @@ def test_hardware_payload_and_ui_agree_on_the_engine_in_use():
 
     js = (Path(__file__).resolve().parents[1] / "marrow" / "web" / "app.js").read_text(encoding="utf-8")
     assert "d.engines" in js and "Fell back to CPU" in js
+
+
+def test_clip_card_actions_in_a_real_browser():
+    """scripts/browser_check.mjs lays the real stylesheet out in Chromium and
+    measures the Download/Edit/More row at five widths (jsdom cannot do layout).
+    Skipped unless node + puppeteer-core + a Chromium binary are available."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node") or shutil.which("nodejs")
+    if not node:
+        pytest.skip("node is not installed")
+    script = Path(__file__).resolve().parents[1] / "scripts" / "browser_check.mjs"
+    probe = subprocess.run([node, "-e", "require.resolve('puppeteer-core')"],
+                           capture_output=True, text=True,
+                           env={**__import__("os").environ,
+                                "NODE_PATH": __import__("os").environ.get("NODE_PATH", "")})
+    chrome = next((p for p in (__import__("os").environ.get("CHROME_PATH"), "/tmp/chromium",
+                               "/usr/bin/chromium", "/usr/bin/chromium-browser",
+                               "/usr/bin/google-chrome") if p and Path(p).exists()), None)
+    if probe.returncode != 0 or not chrome:
+        pytest.skip("puppeteer-core and/or a Chromium binary are not installed")
+    out = subprocess.run([node, str(script)], capture_output=True, text=True, timeout=300)
+    assert "SKIP" not in out.stdout, out.stdout
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "all browser checks passed" in out.stdout

@@ -118,19 +118,31 @@ A forced two-up clip renders in a single pass when every shot is frame-view
 stacked (no per-shot segments, no concat step); segment rendering is only used
 when the panel geometry actually changes inside a clip.
 
-**Previews stay cheap.** The Home preview and the expanded Preview Inspector
-share one source (the backdrop layer is muted and mirrors the foreground, never a
-second file). Both start at `preload="metadata"` and only start fetching when they
-actually play; the Home phone pauses when it scrolls out of view and resumes when
-it comes back, clip cards stop decoding the moment they leave the viewport, and
-opening the expanded preview parks the Home copy first — its position and mute
-state are handed over, and handed back on close — so exactly one copy is ever
-playing (or audible). `node scripts/ui_check.mjs` asserts all of this in a DOM.
+**Previews stay cheap.** The blur-fit backdrop is a low-resolution canvas mirror
+of the foreground video, not a second `<video>`: the preview decodes one stream
+per screen instead of two. Previews start at `preload="metadata"` and only start
+fetching when they actually play; the Home phone pauses (mirror included) when it
+scrolls out of view and resumes when it comes back, clip cards stop decoding the
+moment they leave the viewport, and opening the expanded preview parks the Home
+copy first — its position and mute state are handed over, and handed back on
+close — so exactly one copy is ever playing (or audible).
 
 Checks: `python -m pytest -q` runs the suite (Python tests that need FFmpeg skip
-themselves when it is missing). `node scripts/ui_check.mjs` loads the real
-`index.html` + `app.js` in jsdom and clicks the Home framing control — it needs
-`npm install jsdom` and is skipped by the suite when jsdom is unavailable.
+themselves when it is missing). Two UI checks sit above that, and the suite runs
+them when their tooling is installed and skips them otherwise:
+
+```bash
+npm install jsdom          && node scripts/ui_check.mjs      # Home options + preview media in a DOM
+npm install puppeteer-core && node scripts/browser_check.mjs  # clip-card action row in real Chromium
+```
+
+`ui_check` loads the real `index.html` + `app.js`, clicks the Home framing control
+and asserts the preview media rules (lazy loading, offscreen pause, one playing
+copy). `browser_check` lays the real stylesheet out in headless Chromium and
+measures the clip-card Download/Edit/More row at five widths — 1280/900/600 px
+keep one row with Download primary, 560/390 px put Download on its own row with
+Edit + More aligned underneath, and nothing overflows or overlaps at any of them.
+With `--shots DIR` it also writes a screenshot per width.
 
 ## Tuning
 

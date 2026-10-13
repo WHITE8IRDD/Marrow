@@ -98,8 +98,13 @@ const twoUp = render({ speaker_mode: 'two_up' });
 const seg = twoUp.querySelector('[data-opt="split_screen"]');
 check('framing control postings the legacy key', !!seg);
 check('three modes are offered', seg && [...seg.querySelectorAll('button')].map(b => b.dataset.v).join(',') === 'auto,two_up,off');
+check('labels stay short enough for the segmented control',
+  seg && [...seg.querySelectorAll('button')].map(b => b.textContent.trim()).join('/') === 'Auto/Two-up/Off',
+  seg && [...seg.querySelectorAll('button')].map(b => b.textContent.trim()).join('/'));
 check('saved two-up mode is selected', !!twoUp.querySelector('[data-v="two_up"].on'));
 check('card explains the mode', /Force two-up/.test(twoUp.querySelector('.speaker-mode .tl b').textContent));
+check('the full wording is in the button title',
+  /Force two-up/.test(twoUp.querySelector('[data-v="two_up"]').getAttribute('title') || ''));
 
 const legacyOff = render({ split_screen: false });
 check('legacy split_screen:false maps to Off', legacyOff.querySelector('.speaker-mode').dataset.mode === 'off');
@@ -131,7 +136,7 @@ const intersect = (el, isIntersecting) => {
 const markup = window.document.createElement('div');
 markup.innerHTML = `
   <div class="phone preview-phone" id="homePhone">
-    <video id="homePrevBg" class="prev-bg" muted playsinline loop preload="metadata"></video>
+    <canvas id="homePrevBg" class="prev-bg" aria-hidden="true"></canvas>
     <video id="homePrev" class="prev-fg" muted playsinline loop preload="metadata"></video>
     <div class="phone-placeholder" id="homePrevPlaceholder"></div>
   </div><div id="optbox"></div><div id="modal-root"></div>`;
@@ -139,7 +144,8 @@ window.document.body.appendChild(markup);
 const phone = window.document.getElementById('homePhone');
 const hp = window.document.getElementById('homePrev');
 const hpb = window.document.getElementById('homePrevBg');
-check('previews are marked preload=metadata', hp.preload === 'metadata' && hpb.preload === 'metadata');
+check('the preview starts at preload=metadata', hp.preload === 'metadata');
+check('the backdrop is a canvas, not a second video', hpb.tagName === 'CANVAS');
 
 let hpPlaying = false;                       // jsdom does not run real playback
 Object.defineProperty(hp, 'paused', { get: () => !hpPlaying, configurable: true });
@@ -147,13 +153,15 @@ Object.defineProperty(hp, 'paused', { get: () => !hpPlaying, configurable: true 
 api.setPreviewMedia('/api/projects/x/proxy');
 check('attaching a preview promotes it to preload=auto',
   hp.preload === 'auto' && hp.getAttribute('src') === '/api/projects/x/proxy');
-check('the backdrop shares that one source', hpb.getAttribute('src') === '/api/projects/x/proxy');
+check('no second media element points at the file',
+  !window.document.querySelectorAll('video[src="/api/projects/x/proxy"]')[1]
+  && !hpb.getAttribute('src'));
 check('an observer watches the preview phone', !!ioFor(phone));
 
 hpPlaying = true;
 const homePauses0 = pauses.home;
 intersect(phone, false);
-check('scrolling the preview away pauses both layers', pauses.home === homePauses0 + 2,
+check('scrolling the preview away pauses the preview', pauses.home === homePauses0 + 1,
   `${pauses.home - homePauses0} pause(s)`);
 const homePlaysResume = plays.home;
 intersect(phone, true);
@@ -166,7 +174,7 @@ const homePausesBeforeOpen = pauses.home;
 api.openPreviewModal();
 const modalVid = window.document.getElementById('modalPrev');
 check('expanded preview pauses the Home copy (only one copy runs)',
-  pauses.home === homePausesBeforeOpen + 2, `${pauses.home - homePausesBeforeOpen} pause(s)`);
+  pauses.home === homePausesBeforeOpen + 1, `${pauses.home - homePausesBeforeOpen} pause(s)`);
 check('expanded preview starts where Home was',
   !!modalVid && Math.abs(modalVid.currentTime - 12.5) < 0.001, `got ${modalVid && modalVid.currentTime}`);
 check('the expanded copy inherits the mute state and is the audible one',
