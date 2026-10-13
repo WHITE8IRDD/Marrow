@@ -323,3 +323,33 @@ def test_stream_reports_a_dead_source_as_502(running_app):
     with pytest.raises(urllib.error.HTTPError) as exc:
         urllib.request.urlopen(f"{base}/api/probe/{pid}/stream", timeout=10)
     assert exc.value.code == 502
+
+
+def test_muted_preview_streams_video_only_without_a_full_download():
+    info = {"formats": [_fmt(acodec="none")]}
+    result = probe._preview_result(info, URL)
+    assert result["stream"]["silent"] is True
+    assert result["stream"]["url"] == info["formats"][0]["url"]
+
+
+def test_muted_preview_still_prefers_a_stream_with_audio():
+    info = {"formats": [_fmt(acodec="none", height=480), _fmt(height=360, url="audible")]}
+    assert probe.stream_format(info, allow_video_only=True)["url"] == "audible"
+
+
+def test_playable_preview_does_not_wait_for_thumbnail_strip(tmp_path, monkeypatch):
+    _fake_probe(monkeypatch, {"title": "Talk", "live": False, "stream": None})
+    monkeypatch.setattr(probe, "fetch_preview", lambda *args: None)
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_strip(d):
+        entered.set()
+        release.wait(5)
+
+    monkeypatch.setattr(probe, "_strip_preview", slow_strip)
+    pid = probe.start(URL, tmp_path)
+    try:
+        assert entered.wait(3)
+        assert probe.get(pid)["state"] == "ready"
+    finally:
+        release.set()

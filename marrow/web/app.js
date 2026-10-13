@@ -1631,7 +1631,7 @@ function paintFoundCard(p) {
 function setFoundReady(p) {
   Home.probeReady = true;
   const media = $('#foundMedia');
-  if (media && p.preview) media.innerHTML = `<video src="${p.preview}" controls muted playsinline preload="metadata"></video><span class="chip found-chip">${ico('check')}Preview ready</span>`;
+  if (media && p.preview) media.innerHTML = `<video src="${p.preview}" controls muted playsinline preload="metadata"></video><span class="chip found-chip">${ico('check')}${p.preview_silent ? 'Silent preview · exports include audio' : 'Preview ready'}</span>`;
   const prog = $('#foundProg'); if (prog) prog.textContent = 'Preview ready. Generating uses the full-quality download.';
   if (p.preview) {
     setPreviewMedia(p.preview);

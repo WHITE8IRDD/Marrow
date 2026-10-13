@@ -142,7 +142,7 @@ def build_filter_graph(layout, rx, ry, fps, zoom, ass_name=None, shot=None):
     elif layout == "stacked" and shot and shot.get("panels"):
         (a, b) = shot["panels"][:2]
         ph = ry // 2
-        fps = int(fps or 30)
+        fps = float(fps or 30)
         act = shot.get("active") or []
         panels = []
         for idx, (tag, pan) in enumerate((("ta", a), ("tb", b))):
@@ -165,7 +165,11 @@ def build_filter_graph(layout, rx, ry, fps, zoom, ass_name=None, shot=None):
             else:
                 extra = f",fps={fps}" if act else ""   # keep both panels frame-aligned
                 panels.append(f"{crop},{fit}{extra},setsar=1[p{idx}]")
-        base = ("[0:v]split=2[ta][tb];" + ";".join(panels) +
+        # zoompan d=1 assigns a new timestamp to every input frame.
+        # Resample BEFORE splitting so both panels keep source-time speed,
+        # including when only one panel has active-speaker intervals.
+        timing = f"fps={fps}," if act else ""
+        base = (f"[0:v]{timing}split=2[ta][tb];" + ";".join(panels) +
                 ";[p0][p1]vstack=inputs=2[base]")
     elif layout == "face" and shot and shot.get("cw"):
         cw, ch = int(shot["cw"]), int(shot.get("ch", ry))
@@ -194,7 +198,7 @@ def build_filter_graph(layout, rx, ry, fps, zoom, ass_name=None, shot=None):
         if zoom.get("enabled"):
             # supersample 2x, then push in smoothly using the output frame index `on`
             scale = (
-                f"scale={rx * 2}:{ry * 2}:flags=lanczos,"
+                f"fps={fps},scale={rx * 2}:{ry * 2}:flags=lanczos,"
                 f"zoompan=z='min(1+{zoom.get('speed', 0.0004)}*on,{zoom.get('max_zoom', 1.12)})':"
                 f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={rx}x{ry}:fps={fps}"
             )
