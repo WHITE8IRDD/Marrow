@@ -49,7 +49,7 @@ SPLIT_PERSIST_FRAC = 0.25  # forced two-up also accepts a face seen in ~1/4 of a
 SEPARATION = 0.20      # face-center distance (fraction of width) for "two people"
 MIN_COEXISTENCE = 0.50 # both faces must be visible in the same frame for half the samples
 MIN_STACK_SECONDS = 2.5 # skip fleeting detections and shot/reverse-shot transitions
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 # Duplicate detections of the *same* face (a mirror, or two boxes on one head) are
 # merged, so a single speaker can never fill both panels.
 DUPLICATE_CENTRE = 0.35  # centre distance below this fraction of the face width = same face
@@ -547,17 +547,36 @@ def speaker_activity(frames, tracks, rms=None, energy_fps=ENERGY_FPS):
 
 
 def _panels(faces, W, H):
-    """Two 9:8 cover crops: source-left/top first, the other participant second."""
+    """Two 9:8 crops centered on each participant, source-left/top first.
+
+    A fixed-width crop cannot be centered on a face close to the source edge:
+    clamping its x coordinate to the frame pushes that face toward the side of
+    its output panel. Reduce only the crop that needs it so its center stays on
+    the face while the crop remains inside the source frame.
+    """
     ordered = _panel_order(faces[:2], W)
     panels = []
     for cx, cy, w, _h in ordered:
-        cw = min(float(W), max(w * 4.0, W * 0.45))
-        ch = cw * 8.0 / 9.0
-        if ch > H:
-            ch = float(H)
-            cw = ch * 9.0 / 8.0
-        cw, ch = max(2, int(cw) // 2 * 2), max(2, int(ch) // 2 * 2)
-        x = int(min(max(cx - cw / 2, 0.0), max(0.0, W - cw)))
+        # Keep the existing face-relative framing, but leave room to form a 9:8
+        # crop within the source dimensions before applying the edge constraint.
+        cw = min(float(W), max(w * 4.0, W * 0.45), float(H) * 9.0 / 8.0)
+        face_cx = float(cx)
+        if 0.0 <= face_cx <= W:
+            # When a face is close to either side, shrink its crop just enough
+            # to keep the face center aligned instead of clamping the crop.
+            max_centered_width = 2.0 * min(face_cx, W - face_cx)
+            cw = min(cw, max_centered_width)
+        else:
+            # Face boxes should be inside the frame. Be defensive with stale or
+            # malformed analysis data: preserve a valid crop at the nearest edge.
+            face_cx = min(max(face_cx, cw / 2.0), W - cw / 2.0)
+
+        cw = max(2, int(cw) // 2 * 2)
+        ch = max(2, min(H - H % 2, int(round(cw * 8.0 / 9.0)) // 2 * 2))
+        # Recompute from the quantized crop dimensions; x is then centered on
+        # the detected face to within one pixel (required even by yuv420p).
+        x = int(round(face_cx - cw / 2.0))
+        x = min(max(x, 0), max(0, W - cw))
         y = int(min(max(cy - 0.40 * ch, 0.0), max(0.0, H - ch)))
         x, y = x - (x % 2), y - (y % 2)
         panels.append({"x": x, "y": y, "w": cw, "h": ch})

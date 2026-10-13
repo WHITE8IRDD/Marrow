@@ -70,6 +70,24 @@ def _two_face_stubs(monkeypatch, times, faces_fn):
     monkeypatch.setattr(L, "detect_faces", faces_fn)
 
 
+def test_face_panel_crops_center_speakers_near_source_edges():
+    """Edge clamping used to leave each face toward the outside of its panel."""
+    width, height = 1280, 720
+    centers = (180.0, 1100.0)
+    panels = L._panels([(centers[0], 260.0, 80.0, 0.0),
+                        (centers[1], 260.0, 80.0, 0.0)], width, height)
+
+    assert len(panels) == 2
+    for center, panel in zip(centers, panels):
+        # The face anchor is the horizontal center of its crop (within the even
+        # pixel alignment needed by yuv420p), and every crop stays in-bounds.
+        assert abs(panel["x"] + panel["w"] / 2 - center) <= 1
+        assert 0 <= panel["x"] <= width - panel["w"]
+        assert panel["w"] / panel["h"] == pytest.approx(9 / 8, abs=0.01)
+    assert panels[0]["w"] < width * 0.45   # edge subjects get a tighter centered crop
+    assert panels[1]["w"] < width * 0.45
+
+
 def test_auto_still_refuses_shot_reverse_shot(monkeypatch, tmp_path):
     times = [i * 0.5 for i in range(10)]
 
@@ -266,7 +284,8 @@ def test_selected_mode_reaches_the_rendered_filter_graph(monkeypatch, tmp_path):
     off_graph = _render_graph(monkeypatch, off[0]["layout"], off[0], tmp_path)
 
     assert "vstack=inputs=2" in auto_graph
-    assert "crop=576:512:0:0" in auto_graph and "crop=576:512:704:0" in auto_graph
+    for panel in auto[0]["panels"]:
+        assert f'crop={panel["w"]}:{panel["h"]}:{panel["x"]}:{panel["y"]}' in auto_graph
     assert "vstack=inputs=2" in two_graph
     assert "split=2[ta][tb]" in auto_graph and "split=2[ta][tb]" in two_graph
     assert "vstack" not in off_graph and "split=2" not in off_graph
