@@ -1446,7 +1446,8 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             try:
                 while True:
-                    chunk = up.read(256 * 1024)
+                    # read1 forwards available bytes without waiting to fill 256 KiB.
+                    chunk = up.read1(64 * 1024)
                     if not chunk:
                         break
                     self.wfile.write(chunk)
@@ -1761,6 +1762,7 @@ def r_probe_get(h, q, pid):
         "info": {k: info.get(k) for k in ("title", "channel", "duration", "live", "url", "video_id")} if info else None,
         "thumb": f"/api/probe/{pid}/thumb" if thumb_local else (info.get("thumbnail") if info else None),
         "preview": preview,
+        "preview_silent": bool((info.get("stream") or {}).get("silent")),
     })
 
 

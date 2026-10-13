@@ -43,12 +43,13 @@ def _opts(cfg, extra=None, client=None):
     return o
 
 
-def stream_format(i):
-    """A single progressive http(s) file with picture and sound that a browser plays as-is.
+def stream_format(i, allow_video_only=False):
+    """A single HTTP(S) media file that a browser can play without merging.
 
     When there is one, the Find-video preview streams it through this server straight away,
     so nothing has to be downloaded first. Prefers the best quality at or under 480p, else the
-    smallest one above it. Returns None for HLS/DASH-only sites; those use the download path.
+    smallest one above it. With allow_video_only, accept silent video files if
+    no combined stream exists. Manifest-only sites still use the download path.
     """
     def rank(f):
         h = f.get("height") or 0
@@ -61,20 +62,23 @@ def stream_format(i):
     cands = [f for f in (i.get("formats") or [])
              if f.get("url")
              and str(f.get("protocol") or "") in ("http", "https")
-             and f.get("vcodec") != "none" and f.get("acodec") != "none"   # None = unknown, e.g. a plain .mp4 link
+             and f.get("vcodec") != "none" and (allow_video_only or f.get("acodec") != "none")   # None = unknown, e.g. a plain .mp4 link
              and str(f.get("ext") or "") in STREAM_EXTS]
     if not cands:
         return None
-    f = max(cands, key=rank)
+    # Prefer sound when available; a silent stream is enough for the muted
+    # framing preview and avoids downloading/merging a whole long video.
+    audible = [f for f in cands if f.get("acodec") != "none"]
+    f = max(audible or cands, key=rank)
     return {"url": f["url"], "headers": dict(f.get("http_headers") or i.get("http_headers") or {}),
-            "ext": f.get("ext")}
+            "ext": f.get("ext"), "silent": f.get("acodec") == "none"}
 
 
 def _preview_result(i, url):
     return {"title": i.get("title"), "channel": i.get("channel") or i.get("uploader"),
             "duration": i.get("duration"), "thumbnail": i.get("thumbnail"),
             "live": bool(i.get("is_live")), "url": i.get("webpage_url") or url,
-            "video_id": i.get("id"), "stream": stream_format(i)}
+            "video_id": i.get("id"), "stream": stream_format(i, allow_video_only=True)}
 
 
 class _Cancelled(BaseException):
@@ -260,9 +264,10 @@ def start(url, base_dir, cfg=None):
             with _LOCK:
                 PROBES[pid]["state"] = "preview"
             fetch_preview(pid, url, d, cfg)
-            _strip_preview(d)
             with _LOCK:
                 PROBES[pid].update(state="ready", progress=1.0)
+            # Cosmetic thumbnails must never delay a playable preview.
+            _strip_preview(d)
         except _Cancelled:
             with _LOCK:
                 if pid in PROBES:
