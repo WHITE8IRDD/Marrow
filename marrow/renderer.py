@@ -101,29 +101,44 @@ def _panel_zoom_expr(intervals, panel, fps, amp=0.07, ramp=0.30):
     return f"min(1+{amp}*({'+'.join(terms)}),{1 + amp * 1.02:.4f})"
 
 
+def _frame_view_base(rx, ry):
+    """vstack of the frame's own two side-by-side views (two-up without a subject).
+
+    Two equal crops centred on each half of the frame, cut down to the panel's 9:8
+    shape. This is the last-resort two-up path, used only when nothing in the shot
+    could be measured at all; the geometry every earlier render, test and manifest
+    was written against, so it is left alone.
+    """
+    ph = ry // 2
+    return (
+        f"[0:v]split=2[ta][tb];"
+        f"[ta]crop='min(ih*9/8,iw/2)':h='ow*8/9':x='iw/4-ow/2':y='(ih-oh)/2',"
+        f"scale={rx}:{ph}:flags=lanczos[p0];"
+        f"[tb]crop='min(ih*9/8,iw/2)':h='ow*8/9':x='3*iw/4-ow/2':y='(ih-oh)/2',"
+        f"scale={rx}:{ph}:flags=lanczos[p1];"
+        f"[p0][p1]vstack=inputs=2[base]"
+    )
+
+
 def build_filter_graph(layout, rx, ry, fps, zoom, ass_name=None, shot=None):
     """Build the -filter_complex string. The final labeled output is [v].
 
     shot: optional per-shot geometry. Two stacked variants exist:
-    * ``panels`` present -> one crop per face-derived panel (auto two-shot or
-      forced two-up on real faces; also the active-speaker push-ins).
+    * ``panels`` present -> one crop per subject-anchored panel (auto two-shot,
+      forced two-up, and the active-speaker push-ins). Layout analysis centres
+      each panel on its own subject and gives both panels the same width, so the
+      crop coordinates are used as given and both halves are framed alike.
     * no ``panels`` (``views: "frame"``, or a manual stacked override) -> the
       frame's own two side-by-side views are cropped and stacked. This is the
-      forced two-up path that works with no face data at all; it never shows the
-      same speaker twice because each panel is a different half of the frame.
+      last-resort two-up path, used when nothing could be measured at all; it
+      never shows the same speaker twice because each panel is a different half
+      of the frame.
     """
     ratio = rx / ry
     if layout == "face" and not (shot and shot.get("cw")):
         layout = "crop"          # manual override without track data: center crop
     if layout == "stacked" and not (shot and shot.get("panels")):
-        base = (
-            f"[0:v]split=2[ta][tb];"
-            f"[ta]crop='min(ih*9/8,iw/2)':h='ow*8/9':x='iw/4-ow/2':y='(ih-oh)/2',"
-            f"scale={rx}:{ry // 2}:flags=lanczos[p0];"
-            f"[tb]crop='min(ih*9/8,iw/2)':h='ow*8/9':x='3*iw/4-ow/2':y='(ih-oh)/2',"
-            f"scale={rx}:{ry // 2}:flags=lanczos[p1];"
-            f"[p0][p1]vstack=inputs=2[base]"
-        )
+        base = _frame_view_base(rx, ry)
     elif layout == "stacked" and shot and shot.get("panels"):
         (a, b) = shot["panels"][:2]
         ph = ry // 2
@@ -133,17 +148,23 @@ def build_filter_graph(layout, rx, ry, fps, zoom, ass_name=None, shot=None):
         for idx, (tag, pan) in enumerate((("ta", a), ("tb", b))):
             crop = (f"[{tag}]crop={int(pan['w'])}:{int(pan['h'])}:"
                     f"{int(pan['x'])}:{int(pan['y'])}")
+            # The analysis sizes panels to the output's half-frame; covering the
+            # destination instead of scaling straight into it means an unexpected
+            # panel shape is centred by a crop rather than stretched.
+            fit = (f"scale={rx}:{ph}:flags=lanczos:force_original_aspect_ratio=increase,"
+                   f"crop={rx}:{ph}")
             zexpr = _panel_zoom_expr(act, idx, fps) if act else None
             if zexpr:
                 # push in on the speaker: supersample, then zoompan toward the panel center
                 sw, sh = int(rx * 1.5) & ~1, int(ph * 1.5) & ~1
                 panels.append(
-                    f"{crop},scale={sw}:{sh}:flags=lanczos,"
+                    f"{crop},scale={sw}:{sh}:flags=lanczos:force_original_aspect_ratio=increase,"
+                    f"crop={sw}:{sh},"
                     f"zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-                    f"d=1:s={rx}x{ph}:fps={fps}[p{idx}]")
+                    f"d=1:s={rx}x{ph}:fps={fps},setsar=1[p{idx}]")
             else:
                 extra = f",fps={fps}" if act else ""   # keep both panels frame-aligned
-                panels.append(f"{crop},scale={rx}:{ph}:flags=lanczos{extra}[p{idx}]")
+                panels.append(f"{crop},{fit}{extra},setsar=1[p{idx}]")
         base = ("[0:v]split=2[ta][tb];" + ";".join(panels) +
                 ";[p0][p1]vstack=inputs=2[base]")
     elif layout == "face" and shot and shot.get("cw"):

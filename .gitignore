@@ -11,3 +11,6 @@ probes/
 projects.json
 settings.json
 marrow/assets/models/
+
+# Local work scratch (fixtures, generated clips, research notes)
+.scratch/
